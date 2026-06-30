@@ -38,6 +38,16 @@
 # interrupt"; opencode: "esc interrupt"; pi: "Working..."; grok: "Ctrl+c:cancel"
 # (grok's mid-turn cancel hint, shown iff a turn is running - verified grok 0.2.73).
 FM_TMUX_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working\.\.\.|Ctrl\+c:cancel'
+# Busy footers per harness (mirror fm-watch.sh for the working state). claude/codex:
+# "esc to interrupt"; opencode: "esc interrupt"; pi: "Working..."; kiro: "Kiro is working".
+# Also include kiro's idle input placeholder ("ask a question or describe a task"):
+# it appears on the cursor/composer line when kiro is idle and needs to be treated as
+# "empty" (not pending input) so fm-send's post-Enter composer check does not false-alarm
+# on a fast kiro turn where the placeholder reappears before the 0.4s sleep expires.
+# This entry is intentionally NOT in fm-watch.sh's BUSY_REGEX: the watcher checks the
+# tail-6 lines of the whole pane for stale detection and the placeholder appearing there
+# means kiro is idle/stale (correct), not busy.
+FM_TMUX_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working\.\.\.|Kiro is working|ask a question or describe a task'
 
 # fm_tmux_strip_ghost: remove dim/faint (ANSI SGR 2) styled runs from one captured
 # composer line, then drop any remaining escape sequences, leaving only the plain,

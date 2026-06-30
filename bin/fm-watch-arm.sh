@@ -111,6 +111,67 @@ case "${1:-}" in
   *) echo "usage: $(basename "$0") [--restart]" >&2; exit 2 ;;
 esac
 
+# ── OpenCode harness: watcher lives in a persistent tmux window ──────────────
+# In OpenCode the bash tool subprocess is reaped when the call returns, so this
+# script cannot serve as the long-running parent process.  Instead, create an
+# fm-watch tmux window running fm-watch.sh in an auto-re-arm loop, then return
+# immediately.  The same confirm-and-report logic applies: we still verify a
+# fresh beacon before reporting started/healthy.  Wakes are queue-based in this
+# mode; firstmate drains them on every turn start (bin/fm-wake-drain.sh) instead
+# of receiving a push notification.
+_own_harness="$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || echo unknown)"
+if [ "$_own_harness" = "opencode" ]; then
+  _fm_session=$(tmux display-message -p '#S' 2>/dev/null || echo firstmate)
+  _fm_watch_window="fm-watch"
+  _fm_watch_target="${_fm_session}:${_fm_watch_window}"
+
+  # --restart: stop the current watcher process so the fresh window takes the lock.
+  if [ "$mode" = restart ]; then
+    _lock_pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)
+    if fm_pid_alive "$_lock_pid" && watch_lock_matches_pid "$_lock_pid"; then
+      kill -TERM "$_lock_pid" 2>/dev/null || true
+      _i=0
+      while [ "$_i" -lt 50 ] && fm_pid_alive "$_lock_pid"; do
+        sleep 0.1; _i=$((_i+1))
+      done
+    else
+      clear_stale_recorded_watcher_lock
+    fi
+    tmux kill-window -t "$_fm_watch_target" 2>/dev/null || true
+  fi
+
+  # arm only: if a healthy watcher is already running, do not create a duplicate.
+  if [ "$mode" = arm ] && healthy_watcher; then
+    report_healthy
+    exit 0
+  fi
+
+  # Kill any stale window and (re)create with an auto-re-arm loop.
+  # fm-watch.sh is called directly (not fm-watch-arm.sh) to avoid re-entry;
+  # its singleton lock handles any startup race.
+  tmux kill-window -t "$_fm_watch_target" 2>/dev/null || true
+  tmux new-window -t "$_fm_session" -n "$_fm_watch_window" \
+    "cd $(printf '%q' "$FM_HOME") && while true; do $(printf '%q' "$WATCH"); sleep 1; done" 2>/dev/null || {
+    echo "watcher: FAILED - no live watcher with a fresh beacon"
+    exit 1
+  }
+
+  # Confirm: poll until the lock is held by a live watcher with a fresh beacon.
+  deadline=$(( $(date +%s) + CONFIRM_TIMEOUT ))
+  while :; do
+    if healthy_watcher; then
+      echo "watcher: started pid=$HEALTHY_PID (beacon fresh)"
+      exit 0
+    fi
+    [ "$(date +%s)" -ge "$deadline" ] && break
+    sleep 0.2
+  done
+
+  echo "watcher: FAILED - no live watcher with a fresh beacon"
+  exit 1
+fi
+# ── end OpenCode path ─────────────────────────────────────────────────────────
+
 if [ "$mode" = restart ]; then
   # Home-scoped stop: only the watcher pid recorded in THIS home's lock.
   lock_pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)

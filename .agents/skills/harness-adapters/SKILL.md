@@ -1,6 +1,6 @@
 ---
 name: harness-adapters
-description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, and pi.
+description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, pi, and kiro.
 user-invocable: false
 ---
 
@@ -40,6 +40,7 @@ Natural language is acceptable if uncertain.
 - codex: `$<skill>`, for example `$no-mistakes`; `/<skill>` is claude-only and codex rejects it as "Unrecognized command".
 - opencode: no separate verified skill invocation beyond normal slash-command behavior; use natural language if the exact skill command is uncertain.
 - pi: no separate verified skill invocation beyond normal command behavior; use natural language if the exact skill command is uncertain.
+- kiro: skills are installed in `~/.kiro/skills/`; invocation is likely `/no-mistakes` (same slash-command convention as claude); not yet empirically verified through a full validation run — use natural language if uncertain.
 
 ## claude (VERIFIED)
 
@@ -97,6 +98,15 @@ Opencode can auto-upgrade itself in the background and the running TUI can exit 
 If a pane shows the exit banner, relaunch with `--continue` to resume the session.
 `--prompt` does not auto-submit alongside `--continue`, so send the next instruction via `fm-send` once the TUI is up.
 
+**Watcher (OpenCode-specific behavior).**
+`bin/fm-watch-arm.sh` detects the OpenCode harness and manages a dedicated `fm-watch` tmux window running `fm-watch.sh` in an auto-re-arm loop (`while true; do bin/fm-watch.sh; sleep 1; done`).
+The script returns immediately after confirming the watcher is alive; it does not block.
+Call `bin/fm-watch-arm.sh` as a normal foreground bash call — no harness-tracked background mechanism needed.
+Call it at session start (after bootstrap) and any time the watcher may have died.
+Wakes are **queue-based**: the watcher writes to `.wake-queue` when an event fires, but there is no push notification to firstmate.
+Always run `bin/fm-wake-drain.sh` at the start of every turn to drain any wakes that fired since the last prompt.
+The `fm-watch` window in the firstmate tmux session holds the loop; if it is missing, `bin/fm-watch-arm.sh` recreates it automatically.
+
 ## pi (VERIFIED 2026-06-11)
 
 | Fact | Value |
@@ -116,3 +126,40 @@ The decision persists per path in `~/.pi/agent/trust.json`, so later spawns in t
 `fm-spawn` keeps the turn-end extension in `state/`, outside the worktree, because project-local extension files make the trust gate strictly worse and pollute the project.
 The extension must listen for pi's `turn_end` event, not `agent_end`, so the watcher wakes after each completed turn instead of only when the whole agent run exits.
 Pi sets `PI_CODING_AGENT=true` for its children; this is its harness-detection env marker.
+
+## kiro (VERIFIED 2026-06-28, kiro-cli 2.9.0)
+
+| Fact | Value |
+|---|---|
+| Busy-pane signature | `Kiro is working` (full footer: `Kiro is working · Type to steer · Ctrl+S to queue`) |
+| Idle-pane signature | `ask a question or describe a task` (input box placeholder) |
+| Exit command | `/quit` |
+| Interrupt | single Escape (shows `● Cancelled streaming` then returns to idle) |
+| Skill invocation | `/no-mistakes` (skills in `~/.kiro/skills/`; not yet verified through a full validation run) |
+| Env marker | `KIRO_SESSION_ID` (set for child processes) |
+| Resume | `kiro-cli --resume-id <session-id>` (id printed on exit) |
+
+**VPN / SSL workaround (NYU Langone network only).**
+The NYU VPN does TLS inspection via `nyumcdecrypt.nyumc.org` whose CA is scoped in the macOS keychain only for `psm.nyumc.org`.
+Kiro-cli uses macOS native TLS which respects `SSL_CERT_FILE`.
+Set `KIRO_CA_BUNDLE` in `~/.zshrc` pointing at the rebuilt NYU CA bundle (see `~/workspace/repos/docs/runbooks/ssl-corporate-proxy.md`); `fm-spawn`'s launch template automatically sets `SSL_CERT_FILE="$KIRO_CA_BUNDLE"` when the variable is non-empty.
+Off VPN the variable is ignored and kiro connects normally.
+Rebuild the bundle when hitting certificate expired errors (intermediate cert rotation; see runbook).
+
+**Trust dialog.**
+The `--trust-all-tools` confirmation dialog is suppressed by `{"chat.disableTrustAllConfirmation": true}` in `~/.kiro/settings/cli.json`.
+`fm-spawn` writes this idempotently before every kiro launch.
+If a dialog does appear (e.g. a kiro update reset the setting), accept with two Down keys then Enter (Down=Yes I accept, Down Down=Yes and don't ask again).
+
+**No turn-end hook.**
+Kiro V2 exposes no per-turn shell hook; the `hooks` field in agent configs is present but empty in V2.
+Stale detection in `fm-watch.sh` covers the idle-crewmate case (threshold `FM_STALE_ESCALATE_SECS`, default 240s).
+The crewmate's `done:` status write still wakes the watcher immediately at the end of its work, so end-of-task detection is unaffected.
+
+**MCP disabled.**
+NYU Langone's AWS org has MCP disabled; the warning `MCP disabled by your administrator` appears in the footer but does not affect built-in tools (shell, file read/write, grep, glob, etc.).
+
+**Idle-placeholder and composer state.**
+The idle input box shows `ask a question or describe a task ↵` at normal intensity.
+`fm-tmux-lib.sh`'s `FM_TMUX_BUSY_REGEX_DEFAULT` includes this pattern so the post-Enter composer check treats it as "empty" (not pending input) on a fast kiro turn where the placeholder reappears before the 0.4s sleep.
+This pattern is intentionally absent from `fm-watch.sh`'s `BUSY_REGEX` so stale detection still fires when the crewmate is genuinely idle.

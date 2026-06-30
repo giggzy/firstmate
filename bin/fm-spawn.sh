@@ -133,6 +133,15 @@ launch_template() {
       fi
       ;;
     opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}}'\'' opencode --prompt "$(cat __BRIEF__)"' ;;
+    # kiro: set SSL_CERT_FILE from KIRO_CA_BUNDLE (set in ~/.zshrc for NYU VPN SSL
+    # inspection workaround; see ~/workspace/repos/docs/runbooks/ssl-corporate-proxy.md).
+    # On machines without the env var kiro-cli uses system CAs (works off-VPN).
+    # The trust confirmation dialog is suppressed via ~/.kiro/settings/cli.json:
+    #   {"chat.disableTrustAllConfirmation": true}
+    # which fm-spawn writes the first time it launches a kiro crewmate (idempotent).
+    # No turn-end hook: kiro V2 has no exposed per-turn shell hook; stale detection
+    # in fm-watch.sh covers the idle-crewmate case (threshold: FM_STALE_ESCALATE_SECS).
+    kiro) printf '%s' '${KIRO_CA_BUNDLE:+SSL_CERT_FILE="$KIRO_CA_BUNDLE" }kiro-cli chat --trust-all-tools "$(cat __BRIEF__)"' ;;
     pi)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'pi "$(cat __BRIEF__)"'
@@ -445,6 +454,15 @@ EOF
       ;;
     codex*)
       # codex: turn-end rides the launch command via -c notify=[...] and __TURNEND__.
+      ;;
+    kiro*)
+      # kiro V2: no per-turn shell hook exposed; stale detection covers idle crewmates.
+      # Pre-write the trust-bypass setting so the confirmation dialog never blocks launch.
+      mkdir -p "$HOME/.kiro/settings"
+      KIRO_CLI_JSON="$HOME/.kiro/settings/cli.json"
+      if [ ! -f "$KIRO_CLI_JSON" ] || ! grep -q "disableTrustAllConfirmation" "$KIRO_CLI_JSON" 2>/dev/null; then
+        printf '{"chat.disableTrustAllConfirmation": true}\n' > "$KIRO_CLI_JSON"
+      fi
       ;;
   esac
 fi

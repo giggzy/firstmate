@@ -203,7 +203,7 @@ The idle input box shows `ask a question or describe a task ↵` at normal inten
 `fm-tmux-lib.sh`'s `FM_TMUX_BUSY_REGEX_DEFAULT` includes this pattern so the post-Enter composer check treats it as "empty" (not pending input) on a fast kiro turn where the placeholder reappears before the 0.4s sleep.
 This pattern is intentionally absent from `fm-watch.sh`'s `BUSY_REGEX` so stale detection still fires when the crewmate is genuinely idle.
 
-**Pre-flight checklist (run before spawning any kiro ship crewmate).**
+**Pre-flight checklist (run before spawning any ship crewmate on a project with GitHub Actions CI).**
 
 1. **GitHub Actions enabled-status.** Disabled workflows will silently block CI forever on no-mistakes.
    Run before dispatching — any non-active workflow is a blocker:

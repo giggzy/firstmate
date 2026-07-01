@@ -739,13 +739,15 @@ Silence is the correct state while a healthy background watcher is waiting.
 
 ### Away-mode stub
 
-Invoke the `/afk` skill when the captain says `/afk`, says they are going afk, `state/.afk` exists, an incoming message starts with `FM_INJECT_MARK`, or any `state/.subsuper-*` marker is involved.
+Invoke the `/afk` skill when the captain says `/afk`, says they are going afk, `state/.afk` exists, an incoming message starts with `FM_INJECT_MARK` **and `state/.afk` is set**, or any `state/.subsuper-*` marker is involved.
+In always-on mode (`FM_ALWAYS_ON=1`, no `state/.afk`), the daemon also injects messages prefixed with `FM_INJECT_MARK`; treat those as wake notifications to drain and handle — do NOT load `/afk` or treat them as afk-mode escalations.
 The skill owns the full daemon procedure: classification policy, batching, injection hardening, max-defer, verified submit, marker stripping, portable lock, dedupe, target discovery, reliability properties, and `FM_INJECT_SKIP`.
 Inline facts that must survive without a loaded skill:
 
 - Every daemon injection is prefixed with `FM_INJECT_MARK`, ASCII unit separator `0x1f`, so internal escalations are distinguishable from a captain message.
 - While `state/.afk` exists, the daemon owns the watcher; do not separately arm `fm-watch-arm.sh` or `fm-watch.sh`.
-- If firstmate receives a marked message while afk is active, it is an internal escalation: stay afk and process it.
+- If firstmate receives a marked message **and `state/.afk` is set**, it is an afk-mode escalation: stay afk and process it.
+- If firstmate receives a marked message and `state/.afk` is **not** set, it is an always-on daemon wake: drain `state/.wake-queue` with `bin/fm-wake-drain.sh`, handle the actionable wakes, and re-arm `FM_ALWAYS_ON=1 bin/fm-watch-arm.sh`.
 - If the message starts with `/afk`, stay afk and refresh the flag.
 - Any other unmarked message means the captain is back: clear `state/.afk`, stop the daemon, flush catch-up from `state/.wake-queue`, `state/.subsuper-escalations`, and `state/.subsuper-inject-wedged`, then re-arm normal watcher supervision.
 - Afk never changes approval authority; PR merges, ask-user findings, destructive actions, irreversible actions, and security-sensitive choices still require the same approval they required before.

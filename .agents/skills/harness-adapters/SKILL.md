@@ -192,7 +192,7 @@ The crewmate's `done:` status write still wakes the watcher immediately at the e
 **kiro brief scaffold note.**
 When generating a brief for a kiro ship task using `no-mistakes` mode, replace the `/no-mistakes` slash-command references in the no-mistakes DOD with `no-mistakes axi run --intent "..."` before spawning.
 The brief template is not harness-conditional; firstmate must make this substitution manually.
-For a `no-mistakes`-mode brief, the three occurrences are: the initial validation trigger, the DOD instruction ("run /no-mistakes"), and the done-line example.
+For a `no-mistakes`-mode brief, the three occurrences are: the validation trigger in the DOD instruction ("run /no-mistakes"), the mechanics description ("it loads when you invoke /no-mistakes"), and the done-line example.
 Search the generated `data/<id>/brief.md` Definition of done section for `/no-mistakes` and replace each with the CLI equivalent before handing it to the crewmate.
 
 **MCP disabled.**

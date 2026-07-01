@@ -157,7 +157,7 @@ The recorded harness is used for every dispatch until changed; a per-task instru
 Resolve `default` with `bin/fm-harness.sh`; resolve the active crewmate harness with `bin/fm-harness.sh crew`.
 
 Each adapter splits into mechanics and knowledge.
-The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spawn.sh`; the knowledge you need while supervising (busy signature, exit, interrupt, dialogs, quirks, skill invocation, resume) lives in the agent-only `harness-adapters` skill.
+The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spawn.sh`; the knowledge you need while supervising (busy signature, exit, interrupt, dialogs, quirks, skill invocation, resume, no-mistakes gate-response protocol, OpenCode queue-based watcher limitation, GitHub Actions pre-flight checklist, and kiro brief scaffold) lives in the agent-only `harness-adapters` skill.
 **Never dispatch a crewmate on an unverified adapter.**
 If `config/crew-harness` names an unverified one, tell the captain and fall back to your own harness until it is verified.
 If the captain asks for a new harness, load `harness-adapters`, verify it empirically with a trivial supervised task, then commit the script and knowledge changes.

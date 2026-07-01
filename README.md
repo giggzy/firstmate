@@ -172,7 +172,7 @@ Firstmate's skills live in two separate places with different audiences:
 - [docs/orca-backend.md](docs/orca-backend.md) - experimental Orca backend lifecycle notes and known gaps.
 - [docs/scripts.md](docs/scripts.md) - the `bin/` toolbelt reference.
 - [`AGENTS.md`](AGENTS.md) - firstmate's full operating manual for the orchestrator agent.
-- [CONTRIBUTING.md](CONTRIBUTING.md) - how to contribute, including the dev/test commands.
+- [CONTRIBUTING.md](CONTRIBUTING.md) - how to contribute, including the dev/test commands and versioning policy.
 
 ## Contributing
 

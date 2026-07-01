@@ -88,3 +88,10 @@ tmp=$(mktemp -d) && printf 'done: smoke\n' > "$tmp/smoke.status" && FM_STATE_OVE
 ## Questions
 
 Open an issue, or talk to me on [Discord](https://discord.gg/Wsy2NpnZDu).
+
+## Versioning
+
+There is no fixed release cadence.
+`main` is always the current version.
+Tags are cut on significant milestones, following semver.
+Run `/updatefirstmate` in your firstmate session to fast-forward to the latest.

@@ -63,7 +63,7 @@ Each secondmate gets its own persistent `FM_HOME`, so its local state, backlog, 
 
 ```
 AGENTS.md            this file (CLAUDE.md is a symlink to it)
-CONTRIBUTING.md      contributor workflow and repo conventions
+CONTRIBUTING.md      contributor workflow, repo conventions, and versioning
 README.md            public overview and development notes
 .github/workflows/   shared CI and PR enforcement, committed
 .tasks.toml          tracked tasks-axi markdown backend config; drives backlog mutations when a compatible tasks-axi is on PATH (section 10), otherwise inert

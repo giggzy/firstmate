@@ -741,6 +741,63 @@ trim_log() {
   tail -n "${FM_LOG_KEEP_LINES:-$LOG_KEEP_LINES_DEFAULT}" "$LOG" >"$tmp" 2>/dev/null && mv -f "$tmp" "$LOG"
 }
 
+# queue_consumer_loop: always-on mode on OpenCode.
+# The tmux window already runs fm-watch.sh in a loop and writes actionable wakes
+# to state/.wake-queue. This loop is a pure queue consumer — it polls the queue,
+# classifies each entry as captain-relevant or self-handled, and injects any
+# escalations immediately. It never starts fm-watch.sh (which would compete for
+# the singleton lock and almost always lose to the tmux window loop).
+queue_consumer_loop() {  # <state>
+  local state=$1 queue entry kind key payload reason line
+  queue="${FM_WAKE_QUEUE:-$state/.wake-queue}"
+  local poll_secs="${FM_POLL:-15}"
+  [ "$poll_secs" -gt 5 ] && poll_secs=5  # cap at 5s for responsiveness in always-on
+
+  log "queue-consumer loop started (poll=${poll_secs}s)"
+  while true; do
+    if ! tmux display-message -p -t "$TARGET" '#{pane_id}' >/dev/null 2>&1; then
+      sleep "$INJECT_FAIL_SLEEP"
+      continue
+    fi
+
+    # Drain the queue: read and clear atomically under the queue lock.
+    if fm_lock_try_acquire "$FM_WAKE_QUEUE_LOCK" 2>/dev/null; then
+      local tmp_drain
+      tmp_drain=$(mktemp "${TMPDIR:-/tmp}/fm-wake-drain.XXXXXX" 2>/dev/null) || {
+        fm_lock_release "$FM_WAKE_QUEUE_LOCK" 2>/dev/null || true
+        sleep "$poll_secs"; continue
+      }
+      if [ -s "$queue" ]; then
+        mv "$queue" "$tmp_drain" 2>/dev/null || true
+        : > "$queue" 2>/dev/null || true
+      else
+        rm -f "$tmp_drain"; fm_lock_release "$FM_WAKE_QUEUE_LOCK" 2>/dev/null || true
+        sleep "$poll_secs"; continue
+      fi
+      fm_lock_release "$FM_WAKE_QUEUE_LOCK" 2>/dev/null || true
+
+      # Process each drained entry: classify and escalate captain-relevant ones.
+      while IFS=$'\t' read -r _ _ kind key payload || [ -n "$payload" ]; do
+        [ -z "$kind" ] && continue
+        reason="${kind}: ${payload}"
+        log "queue-consumer: $reason"
+        handle_wake "$reason" "$state"
+      done < "$tmp_drain"
+      rm -f "$tmp_drain"
+
+      # Flush escalations immediately (always-on: no batching).
+      escalate_flush "$state" || true
+      trim_log
+    fi
+
+    if [ "$(_file_age "$state/.subsuper-last-housekeep")" -ge "${FM_HOUSEKEEPING_TICK:-$HOUSEKEEPING_TICK_DEFAULT}" ]; then
+      _now > "$state/.subsuper-last-housekeep"
+      housekeeping "$state"
+    fi
+    sleep "$poll_secs"
+  done
+}
+
 # ============================================================================
 # Everything below runs only when the script is EXECUTED, not sourced. The pure
 # classifiers above are sourceable for unit tests (tests/fm-daemon.test.sh).
@@ -837,6 +894,21 @@ fm_super_main() {
     exit 0
   }
   trap cleanup TERM INT
+
+  # --- always-on + OpenCode: queue consumer (no watcher lock competition) ---
+  # On OpenCode the tmux window already runs fm-watch.sh in a loop and owns the
+  # watcher singleton. Starting a second fm-watch.sh inside the daemon would
+  # compete for that lock and almost always lose (1s tmux restart vs 15s backoff).
+  # Instead, run a pure queue-consumer loop: drain state/.wake-queue directly,
+  # classify entries, and inject captain-relevant wakes immediately.
+  local _own_harness
+  _own_harness="$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || echo unknown)"
+  if [ "${FM_ALWAYS_ON:-0}" = "1" ] && [ "$_own_harness" = "opencode" ]; then
+    log "always-on + opencode: starting queue-consumer loop (no watcher child)"
+    local INJECT_FAIL_SLEEP=${FM_INJECT_FAIL_SLEEP:-$INJECT_FAIL_SLEEP_DEFAULT}
+    queue_consumer_loop "$STATE"
+    exit 0
+  fi
 
   # --- crash-loop guard -----------------------------------------------------
   local crash_times=() backoff_secs=$CRASH_NORMAL_SLEEP

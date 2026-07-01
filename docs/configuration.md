@@ -85,6 +85,8 @@ For the zellij backend, `FM_HOME` does not split containers; use `FM_ZELLIJ_SESS
 
 claude, codex, opencode, pi, grok, and kiro are all empirically verified; new harnesses get verified through a supervised trial task before joining the set.
 The verified adapter knowledge - busy signatures, interrupt and exit commands, skill-invocation syntax, and per-harness quirks - lives in [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
+The verified adapter knowledge - busy signatures, interrupt and exit commands, skill-invocation syntax, per-harness quirks, the no-mistakes gate-response protocol, the OpenCode queue-based watcher limitation, and the GitHub Actions pre-flight checklist - lives in [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
+Note: kiro does not respond to `/no-mistakes` as a slash-command invocation; brief kiro crewmates to use `no-mistakes axi run --intent "..."` directly from the shell instead (verified 2026-07-01).
 Launch mechanics, including the verified command templates, live in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
 `config/crew-harness` is a local, gitignored file containing one adapter name for crewmate and scout launches.
 When it is absent or contains `default`, crewmates mirror the firstmate's own harness.

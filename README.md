@@ -188,4 +188,4 @@ This repo ships its own changes through firstmate: a crewmate in an
 isolated git worktree drives the no-mistakes pipeline, and the captain
 reviews and merges the resulting PR.
 
-- **2026-07-01** — Add session log to README
+- **2026-07-01** — Add session log to README; fix kiro slash-command invocation, gate-response protocol ownership, long pipeline step language, amend-if-up-to-date push recipe, and GitHub Actions pre-flight checks in harness-adapters and brief template

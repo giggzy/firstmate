@@ -52,6 +52,11 @@ Herdr's container shape is workspace-per-home plus tab-per-task: the primary hom
 Zellij is experimental and selected only explicitly: treehouse remains its worktree provider too, and its full verification - the resolved "gaps to verify" list from the original design report, the unconditional-exit-0 CLI quirk and its mitigation, the focus-steal-on-new-tab finding, and known gaps - is recorded in `docs/zellij-backend.md`.
 Zellij's container shape is simpler than herdr's: one shared `firstmate` session, one tab per task, with no per-home workspace split.
 Orca is experimental and selected only explicitly: Orca owns both worktree and terminal lifecycle, records `orca_worktree_id=` and `terminal=`, and removes worktrees through `orca worktree rm` only after the usual firstmate teardown checks pass. Its current behavior and limitations are recorded in `docs/orca-backend.md`.
+**OpenCode watcher limitation.**
+On OpenCode, the watcher accurately detects crewmate completions and writes them to `state/.wake-queue`, but the TUI has no mechanism to inject a message into the active session from a background process.
+Crewmate completions accumulate in the queue and are only surfaced when the captain next sends a message.
+The recommended workaround for long-running kiro crewmates on OpenCode is `/afk` mode: the away-mode daemon monitors the queue and injects escalations autonomously via `tmux send-keys`.
+The full limitation description and forward paths (always-on daemon, opencode serve mode, launchd WatchPaths) are in the opencode section of [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
 
 ## Worktrees, not branches in your checkout
 

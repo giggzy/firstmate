@@ -301,11 +301,6 @@ launch_template() {
         printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox -c "notify=[\"bash\",\"-c\",\"touch __TURNEND__\"]" "$(cat __BRIEF__)"'
       fi
       ;;
-<<<<<<< HEAD
-    opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}}'\'' opencode __MODELFLAG__--prompt "$(cat __BRIEF__)"' ;;
-||||||| parent of 1ded64d (feat(harness): add verified kiro adapter (kiro-cli 2.9.0))
-    opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}}'\'' opencode --prompt "$(cat __BRIEF__)"' ;;
-=======
     opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}}'\'' opencode --prompt "$(cat __BRIEF__)"' ;;
     # kiro: set SSL_CERT_FILE from KIRO_CA_BUNDLE (set in ~/.zshrc for NYU VPN SSL
     # inspection workaround; see ~/workspace/repos/docs/runbooks/ssl-corporate-proxy.md).
@@ -315,8 +310,11 @@ launch_template() {
     # which fm-spawn writes the first time it launches a kiro crewmate (idempotent).
     # No turn-end hook: kiro V2 has no exposed per-turn shell hook; stale detection
     # in fm-watch.sh covers the idle-crewmate case (threshold: FM_STALE_ESCALATE_SECS).
-    kiro) printf '%s' '${KIRO_CA_BUNDLE:+SSL_CERT_FILE="$KIRO_CA_BUNDLE" }kiro-cli chat --trust-all-tools "$(cat __BRIEF__)"' ;;
->>>>>>> 1ded64d (feat(harness): add verified kiro adapter (kiro-cli 2.9.0))
+    # SSL_CERT_FILE is set explicitly (not via ${VAR:+...} expansion) because zsh does
+    # not word-split parameter-expansion results, so "${VAR:+KEY=VAL }cmd" becomes a
+    # single token and fails with "command not found: KEY=VAL cmd". Using a literal
+    # KEY="${OTHER_VAR:-}" assignment prefix is correctly parsed in both bash and zsh.
+    kiro) printf '%s' 'SSL_CERT_FILE="${KIRO_CA_BUNDLE:-}" kiro-cli chat --trust-all-tools "$(cat __BRIEF__)"' ;;
     pi)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'pi __MODELFLAG____EFFORTFLAG__"$(cat __BRIEF__)"'
@@ -901,8 +899,6 @@ EOF
       printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' "$hook_command" > "$GROK_HOOKS_DIR/fm-turn-end.json"
       printf 'token=%s\n' "${auth_file##*/}" > "$WT/.fm-grok-turnend"
       exclude_path '.fm-grok-turnend'
-||||||| parent of 1ded64d (feat(harness): add verified kiro adapter (kiro-cli 2.9.0))
-=======
     kiro*)
       # kiro V2: no per-turn shell hook exposed; stale detection covers idle crewmates.
       # Pre-write the trust-bypass setting so the confirmation dialog never blocks launch.
@@ -911,7 +907,6 @@ EOF
       if [ ! -f "$KIRO_CLI_JSON" ] || ! grep -q "disableTrustAllConfirmation" "$KIRO_CLI_JSON" 2>/dev/null; then
         printf '{"chat.disableTrustAllConfirmation": true}\n' > "$KIRO_CLI_JSON"
       fi
->>>>>>> 1ded64d (feat(harness): add verified kiro adapter (kiro-cli 2.9.0))
       ;;
   esac
 fi

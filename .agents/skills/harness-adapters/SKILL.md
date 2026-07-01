@@ -165,7 +165,7 @@ The watcher accurately detects crewmate completions (`done:`, `needs-decision:`,
 Crewmate completions accumulate in the queue and are only surfaced when the captain next sends a message.
 During long pipeline phases (lint, document, CI wait) firstmate is effectively blind to crewmate state changes unless the captain checks in.
 
-**Workaround:** Use `/afk` mode during long-running crewmate work. The away-mode daemon already solves this: it monitors the wake queue and injects escalations into the firstmate pane via `tmux send-keys`. With `/afk` active, crewmate `done:`, `blocked:`, and `needs-decision:` signals reach firstmate autonomously without captain intervention. This is the recommended pattern for kiro crewmates running long pipelines (15–20 min) on OpenCode.
+**Workaround:** Use `/afk` mode during long-running crewmate work. The away-mode daemon already solves this: it monitors the wake queue and injects escalations into the firstmate pane via `tmux send-keys`. With `/afk` active, crewmate `done:`, `blocked:`, and `needs-decision:` signals reach firstmate autonomously without captain intervention. This is the recommended pattern for any crewmate harness running long pipelines (15–20 min) on OpenCode.
 
 **Forward paths (for future work):**
 - *Always-on daemon (best fit):* Extend the away-mode daemon to a lightweight "always-on" mode that injects only actionable wakes — no away-mode batching — without requiring `state/.afk` to be set. This would give firstmate autonomous wake-up during normal supervision on OpenCode.

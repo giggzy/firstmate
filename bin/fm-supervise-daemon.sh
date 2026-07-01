@@ -748,7 +748,7 @@ trim_log() {
 # escalations immediately. It never starts fm-watch.sh (which would compete for
 # the singleton lock and almost always lose to the tmux window loop).
 queue_consumer_loop() {  # <state>
-  local state=$1 queue entry kind key payload reason line
+  local state=$1 queue kind key payload reason line
   queue="${FM_WAKE_QUEUE:-$state/.wake-queue}"
   local poll_secs="${FM_POLL:-15}"
   [ "$poll_secs" -gt 5 ] && poll_secs=5  # cap at 5s for responsiveness in always-on

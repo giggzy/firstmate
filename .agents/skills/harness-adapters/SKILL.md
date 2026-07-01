@@ -74,6 +74,27 @@ Natural language is acceptable if uncertain.
 - grok: `/<skill>`, for example `/no-mistakes` (same form as claude). Verified end to end: grok discovers the user-level `no-mistakes` skill, `/no-mistakes` invokes it, and grok drives a real `no-mistakes axi run`. Like codex's `$`/`/` popups, typing `/<skill>` opens grok's slash-autocomplete, so a too-fast Enter selects the popup entry instead of sending, and for an argument-taking command (like `/no-mistakes`'s optional task-first argument) that first Enter only expands the popup selection into an argument-hint placeholder rather than submitting - a genuine second Enter is required (see the grok section below for the 2026-07-03 incident and fix). `fm_tmux_submit_core`'s retried Enter (used by `fm-send` on the tmux backend) already handles this correctly by reading the cursor row; the herdr backend needed a dedicated fix (`fm_backend_herdr_composer_state`, docs/herdr-backend.md) because its prior delta-based verification false-positived on that same popup-close content change.
 - kiro: skills are installed in `~/.kiro/skills/`; kiro does NOT respond to `/no-mistakes` as a slash-command invocation — crewmates on kiro ignore the slash and instead run `no-mistakes axi run --intent "..."` directly from the shell. This is verified: both crewmates in the 2026-07-01 smoke test skipped the slash and used the CLI path successfully. Brief kiro crewmates to use `no-mistakes axi run --intent "..."` explicitly; do not use `/no-mistakes` in kiro briefs.
 
+## no-mistakes gate-response protocol (all harnesses)
+
+When a no-mistakes gate surfaces a `needs-decision` finding, firstmate relays it to the captain, gets the decision, then **steers the crewmate to respond** — it does NOT run `no-mistakes axi respond` from its own shell.
+Running `axi respond` from firstmate's shell advances the pipeline gate but leaves the crewmate idle watching an unexpected state; the crewmate needs a steer to re-attach, and the pipeline stays fragile until it does.
+This invariant applies regardless of crewmate harness (claude, codex, kiro, pi).
+
+Correct steer pattern — adapt the action to match the captain's decision:
+
+```sh
+# captain approved a fix:
+bin/fm-send.sh fm-<id> 'the captain approved: fix it. Run: no-mistakes axi respond --action fix and continue driving the pipeline.'
+
+# captain approved as-is (no changes needed):
+bin/fm-send.sh fm-<id> 'the captain approved: accept as-is. Run: no-mistakes axi respond --action approve and continue driving the pipeline.'
+
+# captain chose to skip this step:
+bin/fm-send.sh fm-<id> 'the captain decided to skip this step. Run: no-mistakes axi respond --action skip and continue driving the pipeline.'
+```
+
+The crewmate runs `axi respond` itself, stays in the driver seat, and the pipeline stays coherent throughout.
+
 ## claude (VERIFIED)
 
 | Fact | Value |
@@ -237,16 +258,11 @@ Kiro V2 exposes no per-turn shell hook; the `hooks` field in agent configs is pr
 Stale detection in `fm-watch.sh` covers the idle-crewmate case (threshold `FM_STALE_ESCALATE_SECS`, default 240s).
 The crewmate's `done:` status write still wakes the watcher immediately at the end of its work, so end-of-task detection is unaffected.
 
-**Gate-response protocol (critical).**
-When a no-mistakes gate surfaces a `needs-decision` finding, firstmate relays the decision to the captain, then steers the crewmate to respond — it does NOT run `no-mistakes axi respond` from its own shell.
-Running `axi respond` from firstmate advances the pipeline gate but leaves the crewmate idle watching an unexpected state; the crewmate needs a steer to re-attach.
-Correct pattern:
-
-```
-bin/fm-send.sh fm-<id> 'the captain approved: fix it. Run no-mistakes axi respond --action fix and continue driving the pipeline.'
-```
-
-The crewmate then runs `axi respond` itself, stays in the driver seat, and the pipeline stays coherent throughout.
+**kiro brief scaffold note.**
+When generating a brief for a kiro ship task, replace the three `/no-mistakes` slash-command references in the no-mistakes DOD with `no-mistakes axi run --intent "..."` before spawning.
+The brief template is not harness-conditional; firstmate must make this substitution manually.
+The three occurrences are: the initial validation trigger, the DOD instruction ("run /no-mistakes"), and the done-line example.
+Search the generated `data/<id>/brief.md` for `/no-mistakes` and replace each with the CLI equivalent before handing it to the crewmate.
 
 **MCP disabled.**
 NYU Langone's AWS org has MCP disabled; the warning `MCP disabled by your administrator` appears in the footer but does not affect built-in tools (shell, file read/write, grep, glob, etc.).
@@ -266,5 +282,8 @@ This pattern is intentionally absent from `fm-watch.sh`'s `BUSY_REGEX` so stale 
    ```sh
    gh api --method PUT repos/<owner>/<repo>/actions/workflows/<id>/enable
    ```
-   Then verify by opening a test PR or re-opening an existing one (a `pull_request: reopened` event triggers the workflows).
+   Verify by re-querying the workflow state (the PUT is deterministic; no test PR needed):
+   ```sh
+   gh api repos/<owner>/<repo>/actions/workflows/<id> --jq '{name,state}'
+   ```
    Workflow IDs can be retrieved with `gh api repos/<owner>/<repo>/actions/workflows --jq '.workflows[] | {id, name, state}'`.

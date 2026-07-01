@@ -211,6 +211,21 @@ You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 
+The document and CI steps can take 5–20 minutes of silence.
+\`axi run\` blocks and waits for the pipeline; this silence is normal, not stuck.
+Do NOT re-run \`no-mistakes axi run\` while a run is active, and do NOT check \`axi status\` more than once every 5 minutes while waiting.
+Re-running creates a duplicate run attempt and wastes time.
+If after 20 minutes \`axi status\` shows no active run, only then re-trigger by amending and force-pushing (see push recipe below).
+
+If \`git push no-mistakes <branch>\` says "Everything up-to-date" and \`axi status\` reports no run for your branch:
+the post-receive hook only fires when new objects are received.
+Fix: amend your commit to produce a new SHA and force-push:
+\`\`\`
+git commit --amend --no-edit
+git push no-mistakes fm/<id> --force-with-lease
+\`\`\`
+This re-triggers the hook. Do NOT delete and re-clone the branch from the bare repo.
+
 Two firstmate-specific rules layer on top of that guidance:
 - ask-user findings are not yours to answer: escalate to firstmate (rule 6) and stop.
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.

@@ -1,12 +1,6 @@
 ---
 name: harness-adapters
-<<<<<<< HEAD
-description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, pi, and grok.
-||||||| parent of 11a347b (fix(watcher): OpenCode harness uses persistent tmux window)
-description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, and pi.
-=======
-description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, pi, and kiro.
->>>>>>> 11a347b (fix(watcher): OpenCode harness uses persistent tmux window)
+description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, pi, grok, and kiro.
 user-invocable: false
 metadata:
   internal: true
@@ -77,7 +71,8 @@ Natural language is acceptable if uncertain.
 - opencode: no separate verified skill invocation beyond normal slash-command behavior; use natural language if the exact skill command is uncertain.
 - pi: no separate verified skill invocation beyond normal command behavior; use natural language if the exact skill command is uncertain.
 - grok: `/<skill>`, for example `/no-mistakes` (same form as claude). Verified end to end: grok discovers the user-level `no-mistakes` skill, `/no-mistakes` invokes it, and grok drives a real `no-mistakes axi run`. Like codex's `$`/`/` popups, typing `/<skill>` opens grok's slash-autocomplete, so a too-fast Enter selects the popup entry instead of sending, and for an argument-taking command (like `/no-mistakes`'s optional task-first argument) that first Enter only expands the popup selection into an argument-hint placeholder rather than submitting - a genuine second Enter is required (see the grok section below for the 2026-07-03 incident and fix). `fm_tmux_submit_core`'s retried Enter (used by `fm-send` on the tmux backend) already handles this correctly by reading the cursor row; the herdr backend needed a dedicated fix (`fm_backend_herdr_composer_state`, docs/herdr-backend.md) because its prior delta-based verification false-positived on that same popup-close content change.
-- kiro: skills are installed in `~/.kiro/skills/`; invocation is likely `/no-mistakes` (same slash-command convention as claude); not yet empirically verified through a full validation run — use natural language if uncertain.
+- grok: `/<skill>`, for example `/no-mistakes` (same form as claude). Verified end to end: grok discovers the user-level `no-mistakes` skill, `/no-mistakes` invokes it, and grok drives a real `no-mistakes axi run`. Like codex's `$`/`/` popups, typing `/<skill>` opens grok's slash-autocomplete, so a too-fast Enter selects the popup entry instead of sending, and for an argument-taking command (like `/no-mistakes`'s optional task-first argument) that first Enter only expands the popup selection into an argument-hint placeholder rather than submitting - a genuine second Enter is required (see the grok section below for the 2026-07-03 incident and fix). `fm_tmux_submit_core`'s retried Enter (used by `fm-send` on the tmux backend) already handles this correctly by reading the cursor row; the herdr backend needed a dedicated fix (`fm_backend_herdr_composer_state`, docs/herdr-backend.md) because its prior delta-based verification false-positived on that same popup-close content change.
+- kiro: skills are installed in `~/.kiro/skills/`; kiro does NOT respond to `/no-mistakes` as a slash-command invocation — crewmates on kiro ignore the slash and instead run `no-mistakes axi run --intent "..."` directly from the shell. This is verified: both crewmates in the 2026-07-01 smoke test skipped the slash and used the CLI path successfully. Brief kiro crewmates to use `no-mistakes axi run --intent "..."` explicitly; do not use `/no-mistakes` in kiro briefs.
 
 ## claude (VERIFIED)
 
@@ -144,6 +139,18 @@ Wakes are **queue-based**: the watcher writes to `.wake-queue` when an event fir
 Always run `bin/fm-wake-drain.sh` at the start of every turn to drain any wakes that fired since the last prompt.
 The `fm-watch` window in the firstmate tmux session holds the loop; if it is missing, `bin/fm-watch-arm.sh` recreates it automatically.
 
+**Limitation: no autonomous wake-up on OpenCode.**
+The watcher accurately detects crewmate completions (`done:`, `needs-decision:`, `failed:`) and writes them to `state/.wake-queue`, but OpenCode's TUI mode has no mechanism to inject a message into the active session from a background process.
+Crewmate completions accumulate in the queue and are only surfaced when the captain next sends a message.
+During long pipeline phases (lint, document, CI wait) firstmate is effectively blind to crewmate state changes unless the captain checks in.
+
+**Workaround:** Use `/afk` mode during long-running crewmate work. The away-mode daemon already solves this: it monitors the wake queue and injects escalations into the firstmate pane via `tmux send-keys`. With `/afk` active, crewmate `done:`, `blocked:`, and `needs-decision:` signals reach firstmate autonomously without captain intervention. This is the recommended pattern for kiro crewmates running long pipelines (15–20 min) on OpenCode.
+
+**Forward paths (for future work):**
+- *Always-on daemon (best fit):* Extend the away-mode daemon to a lightweight "always-on" mode that injects only actionable wakes — no away-mode batching — without requiring `state/.afk` to be set. This would give firstmate autonomous wake-up during normal supervision on OpenCode.
+- *opencode serve mode:* If firstmate ran under `opencode serve`, a background file-watcher on `state/.wake-queue` could call `POST /session/{id}/message` to inject a wake phrase. The REST API is confirmed: `POST /session/{id}/message` with `{"parts":[{"type":"text","text":"..."}]}` triggers a full AI turn. Requires running firstmate differently.
+- *launchd WatchPaths:* A macOS `LaunchAgents` plist watching `state/.wake-queue` could fire a script that `tmux send-keys` into the firstmate window. No polling, low overhead. Requires one-time `launchctl load` setup.
+
 ## pi (VERIFIED 2026-06-11)
 
 | Fact | Value |
@@ -201,8 +208,6 @@ The hook reads `$GROK_WORKSPACE_ROOT`, which is always set for hooks and equals 
 This keeps the hook outside the worktree, needs no trust grant, and writes only firstmate-owned files.
 `fm-teardown` removes the worktree pointer before returning a pooled worktree.
 Secondmate spawns skip the pointer (idle panes are healthy, no stale-pane detection for them).
-||||||| parent of 11a347b (fix(watcher): OpenCode harness uses persistent tmux window)
-=======
 ## kiro (VERIFIED 2026-06-28, kiro-cli 2.9.0)
 
 | Fact | Value |
@@ -211,7 +216,7 @@ Secondmate spawns skip the pointer (idle panes are healthy, no stale-pane detect
 | Idle-pane signature | `ask a question or describe a task` (input box placeholder) |
 | Exit command | `/quit` |
 | Interrupt | single Escape (shows `● Cancelled streaming` then returns to idle) |
-| Skill invocation | `/no-mistakes` (skills in `~/.kiro/skills/`; not yet verified through a full validation run) |
+| Skill invocation | CLI only: `no-mistakes axi run --intent "..."` — `/no-mistakes` slash-command does NOT fire in kiro (verified 2026-07-01) |
 | Env marker | `KIRO_SESSION_ID` (set for child processes) |
 | Resume | `kiro-cli --resume-id <session-id>` (id printed on exit) |
 
@@ -232,6 +237,17 @@ Kiro V2 exposes no per-turn shell hook; the `hooks` field in agent configs is pr
 Stale detection in `fm-watch.sh` covers the idle-crewmate case (threshold `FM_STALE_ESCALATE_SECS`, default 240s).
 The crewmate's `done:` status write still wakes the watcher immediately at the end of its work, so end-of-task detection is unaffected.
 
+**Gate-response protocol (critical).**
+When a no-mistakes gate surfaces a `needs-decision` finding, firstmate relays the decision to the captain, then steers the crewmate to respond — it does NOT run `no-mistakes axi respond` from its own shell.
+Running `axi respond` from firstmate advances the pipeline gate but leaves the crewmate idle watching an unexpected state; the crewmate needs a steer to re-attach.
+Correct pattern:
+
+```
+bin/fm-send.sh fm-<id> 'the captain approved: fix it. Run no-mistakes axi respond --action fix and continue driving the pipeline.'
+```
+
+The crewmate then runs `axi respond` itself, stays in the driver seat, and the pipeline stays coherent throughout.
+
 **MCP disabled.**
 NYU Langone's AWS org has MCP disabled; the warning `MCP disabled by your administrator` appears in the footer but does not affect built-in tools (shell, file read/write, grep, glob, etc.).
 
@@ -239,4 +255,16 @@ NYU Langone's AWS org has MCP disabled; the warning `MCP disabled by your admini
 The idle input box shows `ask a question or describe a task ↵` at normal intensity.
 `fm-tmux-lib.sh`'s `FM_TMUX_BUSY_REGEX_DEFAULT` includes this pattern so the post-Enter composer check treats it as "empty" (not pending input) on a fast kiro turn where the placeholder reappears before the 0.4s sleep.
 This pattern is intentionally absent from `fm-watch.sh`'s `BUSY_REGEX` so stale detection still fires when the crewmate is genuinely idle.
->>>>>>> 11a347b (fix(watcher): OpenCode harness uses persistent tmux window)
+**Pre-flight checklist (run before spawning any kiro ship crewmate).**
+
+1. **GitHub Actions enabled-status.** Disabled workflows will silently block CI forever on no-mistakes.
+   Run before dispatching — any non-active workflow is a blocker:
+   ```sh
+   gh api repos/<owner>/<repo>/actions/workflows --jq '.workflows[] | select(.state != "active") | .name'
+   ```
+   If any are listed, re-enable them with:
+   ```sh
+   gh api --method PUT repos/<owner>/<repo>/actions/workflows/<id>/enable
+   ```
+   Then verify by opening a test PR or re-opening an existing one (a `pull_request: reopened` event triggers the workflows).
+   Workflow IDs can be retrieved with `gh api repos/<owner>/<repo>/actions/workflows --jq '.workflows[] | {id, name, state}'`.

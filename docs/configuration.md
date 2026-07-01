@@ -39,9 +39,10 @@ When `FM_HOME` is unset, it also behaves as the old whole-root override.
 
 ## Harness support
 
-claude, codex, opencode, and pi are all empirically verified; new harnesses get verified through a supervised trial task before joining the set.
+claude, codex, opencode, pi, and kiro are all empirically verified; new harnesses get verified through a supervised trial task before joining the set.
 The verified adapter knowledge - busy signatures, interrupt and exit commands, skill-invocation syntax, and per-harness quirks - lives in [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
 Launch mechanics, including the verified command templates, live in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
+For kiro on the NYU Langone VPN, set `KIRO_CA_BUNDLE` in `~/.zshrc` to the rebuilt NYU CA bundle path; `fm-spawn`'s launch template exports `SSL_CERT_FILE` from that variable via a `[ -n ... ] && export` guard (zsh-safe; avoids the word-split pitfall of `${VAR:+KEY=VAL }cmd` and never sets `SSL_CERT_FILE` to an empty string off VPN).
 
 ## Toolchain
 

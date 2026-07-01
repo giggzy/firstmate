@@ -141,7 +141,12 @@ launch_template() {
     # which fm-spawn writes the first time it launches a kiro crewmate (idempotent).
     # No turn-end hook: kiro V2 has no exposed per-turn shell hook; stale detection
     # in fm-watch.sh covers the idle-crewmate case (threshold: FM_STALE_ESCALATE_SECS).
-    kiro) printf '%s' '${KIRO_CA_BUNDLE:+SSL_CERT_FILE="$KIRO_CA_BUNDLE" }kiro-cli chat --trust-all-tools "$(cat __BRIEF__)"' ;;
+    # SSL_CERT_FILE is set conditionally via a guard expression because zsh does not
+    # word-split parameter-expansion results, so "${VAR:+KEY=VAL }cmd" becomes a single
+    # token and fails with "command not found: KEY=VAL cmd"; the [ -n ... ] && export
+    # form works in both bash and zsh and avoids setting SSL_CERT_FILE to "" when
+    # KIRO_CA_BUNDLE is unset (an empty SSL_CERT_FILE can break TLS on some stacks).
+    kiro) printf '%s' '[ -n "${KIRO_CA_BUNDLE:-}" ] && export SSL_CERT_FILE="$KIRO_CA_BUNDLE"; kiro-cli chat --trust-all-tools "$(cat __BRIEF__)"' ;;
     pi)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'pi "$(cat __BRIEF__)"'

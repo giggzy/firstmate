@@ -142,8 +142,8 @@ Pi sets `PI_CODING_AGENT=true` for its children; this is its harness-detection e
 **VPN / SSL workaround (NYU Langone network only).**
 The NYU VPN does TLS inspection via `nyumcdecrypt.nyumc.org` whose CA is scoped in the macOS keychain only for `psm.nyumc.org`.
 Kiro-cli uses macOS native TLS which respects `SSL_CERT_FILE`.
-Set `KIRO_CA_BUNDLE` in `~/.zshrc` pointing at the rebuilt NYU CA bundle (see `~/workspace/repos/docs/runbooks/ssl-corporate-proxy.md`); `fm-spawn`'s launch template automatically sets `SSL_CERT_FILE="$KIRO_CA_BUNDLE"` when the variable is non-empty.
-Off VPN the variable is ignored and kiro connects normally.
+Set `KIRO_CA_BUNDLE` in `~/.zshrc` pointing at the rebuilt NYU CA bundle (see `~/workspace/repos/docs/runbooks/ssl-corporate-proxy.md`); `fm-spawn`'s launch template sets `SSL_CERT_FILE="$KIRO_CA_BUNDLE"` only when the variable is non-empty (via a `[ -n ... ] && export` guard, which avoids the zsh word-split pitfall of `${VAR:+KEY=VAL }cmd`).
+Off VPN the variable is unset, the guard is skipped, and kiro connects with its default TLS settings.
 Rebuild the bundle when hitting certificate expired errors (intermediate cert rotation; see runbook).
 
 **Trust dialog.**

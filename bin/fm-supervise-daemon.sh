@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fm-supervise-daemon.sh — presence-gated sub-supervisor (closes #27's P2).
+# fm-supervise-daemon.sh — sub-supervisor daemon (closes #27's P2).
 #
 # Wraps bin/fm-watch.sh: runs it as a child, classifies each wake reason, and
 # either SELF-HANDLES the routine majority in bash (no firstmate turn) or
@@ -10,14 +10,14 @@
 # check-output events reach the LLM, and even then as one pre-read digest per
 # batch window.
 #
-# PRESENCE-GATING (the /afk contract). The daemon is the away-mode engine: it
-# injects ONLY when the durable away-mode flag state/.afk is present. Invoking
-# the /afk skill sets that flag and starts this daemon; any real (unmarked)
-# user message clears it and firstmate resumes full responsiveness.
-# When afk is off, normal fm-watch.sh always-on triage is the active mechanism.
-# Any buffered daemon escalations that remain while afk is off survive in
-# state/.subsuper-escalations and are flushed on the next "while you were out"
-# catch-up or when afk is re-entered.
+# INJECTION GATE. The daemon injects when EITHER the durable away-mode flag
+# state/.afk is present (the /afk contract) OR the FM_ALWAYS_ON=1 environment
+# variable is set (the always-on OpenCode mode). In always-on mode the daemon
+# co-starts alongside the watcher via fm-watch-arm.sh, bypasses the 90s batch
+# window (flushes immediately), and injects actionable wakes directly into the
+# firstmate pane so wakes reach firstmate without waiting for a user turn.
+# When both afk and always-on are off, the daemon self-handles and stays quiet;
+# buffered escalations survive in state/.subsuper-escalations for the next flush.
 #
 # IN-BAND SENTINEL MARKER. Every daemon injection is prefixed with
 # FM_INJECT_MARK (ASCII unit separator, 0x1f) — a byte a human would never type
@@ -143,7 +143,7 @@ CRASH_NORMAL_SLEEP_DEFAULT=5
 LOG_MAX_BYTES_DEFAULT=1048576
 LOG_KEEP_LINES_DEFAULT=2000
 
-# --- presence-gating + sentinel marker --------------------------------------
+# --- injection gate + sentinel marker --------------------------------------
 # The in-band sentinel: ASCII unit separator (0x1f). Invisible and untypable on
 # a normal keyboard, so no real user message starts with it. Every daemon
 # injection is prefixed with this byte; firstmate treats a leading marker as an
@@ -780,7 +780,9 @@ fm_super_main() {
   afk_active "$STATE" && afk_status="on"
   local always_on_label="off"
   [ "${FM_ALWAYS_ON:-0}" = "1" ] && always_on_label="on"
-  log "daemon starting (pid $$); target=$TARGET; target_source=$target_source; afk=$afk_status; always_on=$always_on_label; inject_skip='${FM_INJECT_SKIP:-$INJECT_SKIP_DEFAULT}'; stale_escalate=${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}s; batch=${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}s"
+  local _log_batch="${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}"
+  [ "${FM_ALWAYS_ON:-0}" = "1" ] && _log_batch="0 (always-on)"
+  log "daemon starting (pid $$); target=$TARGET; target_source=$target_source; afk=$afk_status; always_on=$always_on_label; inject_skip='${FM_INJECT_SKIP:-$INJECT_SKIP_DEFAULT}'; stale_escalate=${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}s; batch=${_log_batch}s"
 
   # --- shutdown: flush buffered escalations, reap child, release lock -------
   local WATCHER_PID="" CUR_TMP=""

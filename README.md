@@ -148,3 +148,11 @@ Contributions are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md) for the workf
 ## License
 
 MIT - see [LICENSE](LICENSE).
+
+## Session log
+
+This repo ships its own changes through firstmate: a kiro crewmate in an
+isolated git worktree drives the no-mistakes pipeline, and the captain
+reviews and merges the resulting PR.
+
+- **2026-07-01** — Add session log to README

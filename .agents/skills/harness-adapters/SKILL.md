@@ -271,19 +271,22 @@ NYU Langone's AWS org has MCP disabled; the warning `MCP disabled by your admini
 The idle input box shows `ask a question or describe a task ↵` at normal intensity.
 `fm-tmux-lib.sh`'s `FM_TMUX_BUSY_REGEX_DEFAULT` includes this pattern so the post-Enter composer check treats it as "empty" (not pending input) on a fast kiro turn where the placeholder reappears before the 0.4s sleep.
 This pattern is intentionally absent from `fm-watch.sh`'s `BUSY_REGEX` so stale detection still fires when the crewmate is genuinely idle.
-**Pre-flight checklist (run before spawning any ship crewmate on a project with GitHub Actions CI).**
+## Pre-flight checklist (all harnesses, GitHub Actions CI)
 
-1. **GitHub Actions enabled-status.** Disabled workflows will silently block CI forever on no-mistakes.
-   Run before dispatching — any non-active workflow is a blocker:
+Run this before spawning any ship crewmate on a project that uses GitHub Actions for CI.
+Disabled workflows block CI silently forever on no-mistakes — there is no error, the `ci` step simply polls indefinitely.
+
+1. **GitHub Actions enabled-status.**
+   Any non-active workflow is a blocker:
    ```sh
    gh api repos/<owner>/<repo>/actions/workflows --jq '.workflows[] | select(.state != "active") | .name'
    ```
-   If any are listed, re-enable them with:
+   If any are listed, re-enable them:
    ```sh
    gh api --method PUT repos/<owner>/<repo>/actions/workflows/<id>/enable
    ```
-   Verify by re-querying the workflow state (the PUT is deterministic; no test PR needed):
+   Verify by re-querying (the PUT is deterministic; no test PR needed):
    ```sh
    gh api repos/<owner>/<repo>/actions/workflows/<id> --jq '{name,state}'
    ```
-   Workflow IDs can be retrieved with `gh api repos/<owner>/<repo>/actions/workflows --jq '.workflows[] | {id, name, state}'`.
+   Workflow IDs: `gh api repos/<owner>/<repo>/actions/workflows --jq '.workflows[] | {id, name, state}'`.

@@ -55,7 +55,7 @@ Orca is experimental and selected only explicitly: Orca owns both worktree and t
 **OpenCode watcher limitation.**
 On OpenCode, the watcher accurately detects crewmate completions and writes them to `state/.wake-queue`, but the TUI has no mechanism to inject a message into the active session from a background process.
 Crewmate completions accumulate in the queue and are only surfaced when the captain next sends a message.
-The recommended workaround for long-running kiro crewmates on OpenCode is `/afk` mode: the away-mode daemon monitors the queue and injects escalations autonomously via `tmux send-keys`.
+The recommended workaround for any crewmate harness running long pipelines on OpenCode is `/afk` mode: the away-mode daemon monitors the queue and injects escalations autonomously via `tmux send-keys`.
 The full limitation description and forward paths (always-on daemon, opencode serve mode, launchd WatchPaths) are in the opencode section of [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
 
 ## Worktrees, not branches in your checkout

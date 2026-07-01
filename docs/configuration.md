@@ -83,7 +83,7 @@ For the zellij backend, `FM_HOME` does not split containers; use `FM_ZELLIJ_SESS
 
 ## Harness support
 
-claude, codex, opencode, pi, and grok are all empirically verified; new harnesses get verified through a supervised trial task before joining the set.
+claude, codex, opencode, pi, grok, and kiro are all empirically verified; new harnesses get verified through a supervised trial task before joining the set.
 The verified adapter knowledge - busy signatures, interrupt and exit commands, skill-invocation syntax, and per-harness quirks - lives in [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
 Launch mechanics, including the verified command templates, live in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
 `config/crew-harness` is a local, gitignored file containing one adapter name for crewmate and scout launches.
@@ -99,6 +99,7 @@ When `config/crew-dispatch.json` exists, crewmate and scout spawns require an ex
 The primary propagates `config/crew-dispatch.json`, `config/crew-harness`, and `config/backlog-backend` into secondmate homes at secondmate spawn, during the locked session-start bootstrap secondmate sweep, and during explicit `bin/fm-config-push.sh` runs, so a secondmate's own crewmates, dispatch profiles, and backlog backend use the primary values.
 `config/secondmate-harness` is not inherited because secondmates do not launch secondmates.
 For grok, `fm-spawn.sh` installs one firstmate-owned global turn-end hook under `$GROK_HOME/hooks/`, or `~/.grok/hooks/` when `GROK_HOME` is unset, and drops a per-task `.fm-grok-turnend` pointer in the worktree, with teardown removing the task token and pointer.
+For kiro on the NYU Langone VPN, set `KIRO_CA_BUNDLE` in `~/.zshrc` to the rebuilt NYU CA bundle path; `fm-spawn`'s launch template exports `SSL_CERT_FILE` from that variable via a `[ -n ... ] && export` guard (zsh-safe; avoids the word-split pitfall of `${VAR:+KEY=VAL }cmd` and never sets `SSL_CERT_FILE` to an empty string off VPN).
 
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
@@ -115,6 +116,8 @@ Malformed JSON, an unverified harness, or an effort value unsupported by that ha
 If no dispatch rule fits, firstmate uses the dispatch profile `default` when present, then falls back to `config/crew-harness`.
 Because the spawn backstop is gated by file presence, any fallback path after a missing match, validation error, or missing `jq` still passes a resolved harness explicitly until the file is fixed or removed.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
+For kiro on the NYU Langone VPN, set `KIRO_CA_BUNDLE` in `~/.zshrc` to the rebuilt NYU CA bundle path; `fm-spawn`'s launch template exports `SSL_CERT_FILE` from that variable via a `[ -n ... ] && export` guard (zsh-safe; avoids the word-split pitfall of `${VAR:+KEY=VAL }cmd` and never sets `SSL_CERT_FILE` to an empty string off VPN).
+>>>>>>> 2c278d5 (no-mistakes(document): add kiro to verified harness lists; document zsh-safe SSL guard)
 
 ## Toolchain
 

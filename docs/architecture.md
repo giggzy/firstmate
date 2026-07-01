@@ -53,10 +53,12 @@ Zellij is experimental and selected only explicitly: treehouse remains its workt
 Zellij's container shape is simpler than herdr's: one shared `firstmate` session, one tab per task, with no per-home workspace split.
 Orca is experimental and selected only explicitly: Orca owns both worktree and terminal lifecycle, records `orca_worktree_id=` and `terminal=`, and removes worktrees through `orca worktree rm` only after the usual firstmate teardown checks pass. Its current behavior and limitations are recorded in `docs/orca-backend.md`.
 **OpenCode watcher limitation.**
+**OpenCode watcher and always-on daemon mode.**
 On OpenCode, the watcher accurately detects crewmate completions and writes them to `state/.wake-queue`, but the TUI has no mechanism to inject a message into the active session from a background process.
-Crewmate completions accumulate in the queue and are only surfaced when the captain next sends a message.
-The recommended workaround for any crewmate harness running long pipelines on OpenCode is `/afk` mode: the away-mode daemon monitors the queue and injects escalations autonomously via `tmux send-keys`.
-The full limitation description and forward paths (always-on daemon, opencode serve mode, launchd WatchPaths) are in the opencode section of [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
+Without additional configuration, crewmate completions accumulate in the queue and are only surfaced when the captain next sends a message.
+Setting `FM_ALWAYS_ON=1` before arming the watcher activates always-on daemon mode: the daemon co-starts automatically, injects actionable wakes directly into the firstmate pane via `tmux send-keys` as they arrive, and bypasses the 90-second batching delay.
+The watcher enters one-shot mode automatically (same as under `/afk`) to prevent double-triage; no `state/.afk` is set.
+See the opencode section of [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md) for usage.
 
 ## Worktrees, not branches in your checkout
 

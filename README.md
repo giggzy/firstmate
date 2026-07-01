@@ -184,7 +184,7 @@ MIT - see [LICENSE](LICENSE).
 
 ## Session log
 
-This repo ships its own changes through firstmate: a kiro crewmate in an
+This repo ships its own changes through firstmate: a crewmate in an
 isolated git worktree drives the no-mistakes pipeline, and the captain
 reviews and merges the resulting PR.
 

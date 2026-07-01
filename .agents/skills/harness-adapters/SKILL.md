@@ -190,10 +190,10 @@ Stale detection in `fm-watch.sh` covers the idle-crewmate case (threshold `FM_ST
 The crewmate's `done:` status write still wakes the watcher immediately at the end of its work, so end-of-task detection is unaffected.
 
 **kiro brief scaffold note.**
-When generating a brief for a kiro ship task, replace the three `/no-mistakes` slash-command references in the no-mistakes DOD with `no-mistakes axi run --intent "..."` before spawning.
+When generating a brief for a kiro ship task using `no-mistakes` mode, replace the `/no-mistakes` slash-command references in the no-mistakes DOD with `no-mistakes axi run --intent "..."` before spawning.
 The brief template is not harness-conditional; firstmate must make this substitution manually.
-The three occurrences are: the initial validation trigger, the DOD instruction ("run /no-mistakes"), and the done-line example.
-Search the generated `data/<id>/brief.md` for `/no-mistakes` and replace each with the CLI equivalent before handing it to the crewmate.
+For a `no-mistakes`-mode brief, the three occurrences are: the initial validation trigger, the DOD instruction ("run /no-mistakes"), and the done-line example.
+Search the generated `data/<id>/brief.md` Definition of done section for `/no-mistakes` and replace each with the CLI equivalent before handing it to the crewmate.
 
 **MCP disabled.**
 NYU Langone's AWS org has MCP disabled; the warning `MCP disabled by your administrator` appears in the footer but does not affect built-in tools (shell, file read/write, grep, glob, etc.).

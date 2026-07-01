@@ -1,6 +1,7 @@
 # Configuration
 
 The files and environment variables you set to operate firstmate.
+See also: [architecture overview](architecture.md) and [script reference](scripts.md).
 
 ## Orchestrator behavior (AGENTS.md)
 

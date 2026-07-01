@@ -52,13 +52,13 @@ Correct steer pattern — adapt the action to match the captain's decision:
 
 ```sh
 # captain approved a fix:
-bin/fm-send.sh fm-<id> 'the captain approved: fix it. Run: no-mistakes axi respond --action fix and continue driving the pipeline.'
+bin/fm-send.sh fm-<id> 'the captain approved: fix it. Run: no-mistakes axi respond --action fix. Then continue driving the pipeline.'
 
 # captain approved as-is (no changes needed):
-bin/fm-send.sh fm-<id> 'the captain approved: accept as-is. Run: no-mistakes axi respond --action approve and continue driving the pipeline.'
+bin/fm-send.sh fm-<id> 'the captain approved: accept as-is. Run: no-mistakes axi respond --action approve. Then continue driving the pipeline.'
 
 # captain chose to skip this step:
-bin/fm-send.sh fm-<id> 'the captain decided to skip this step. Run: no-mistakes axi respond --action skip and continue driving the pipeline.'
+bin/fm-send.sh fm-<id> 'the captain decided to skip this step. Run: no-mistakes axi respond --action skip. Then continue driving the pipeline.'
 ```
 
 The crewmate runs `axi respond` itself, stays in the driver seat, and the pipeline stays coherent throughout.

@@ -143,6 +143,13 @@ if [ "$_own_harness" = "opencode" ]; then
   # arm only: if a healthy watcher is already running, do not create a duplicate.
   if [ "$mode" = arm ] && healthy_watcher; then
     report_healthy
+    # Always-on: co-start the daemon if not already running.
+    if [ "${FM_ALWAYS_ON:-0}" = "1" ]; then
+      _dp="$STATE/.supervise-daemon.pid"
+      if ! { [ -f "$_dp" ] && kill -0 "$(cat "$_dp" 2>/dev/null)" 2>/dev/null; }; then
+        FM_ALWAYS_ON=1 nohup "$SCRIPT_DIR/fm-supervise-daemon.sh" >/dev/null 2>&1 &
+      fi
+    fi
     exit 0
   fi
 
@@ -151,7 +158,7 @@ if [ "$_own_harness" = "opencode" ]; then
   # its singleton lock handles any startup race.
   tmux kill-window -t "$_fm_watch_target" 2>/dev/null || true
   tmux new-window -t "$_fm_session" -n "$_fm_watch_window" \
-    "cd $(printf '%q' "$FM_HOME") && while true; do $(printf '%q' "$WATCH"); sleep 1; done" 2>/dev/null || {
+    "cd $(printf '%q' "$FM_HOME") && export FM_ALWAYS_ON=${FM_ALWAYS_ON:-0}; while true; do $(printf '%q' "$WATCH"); sleep 1; done" 2>/dev/null || {
     echo "watcher: FAILED - no live watcher with a fresh beacon"
     exit 1
   }
@@ -161,6 +168,13 @@ if [ "$_own_harness" = "opencode" ]; then
   while :; do
     if healthy_watcher; then
       echo "watcher: started pid=$HEALTHY_PID (beacon fresh)"
+      # Always-on: co-start the daemon now that the watcher is confirmed live.
+      if [ "${FM_ALWAYS_ON:-0}" = "1" ]; then
+        _dp="$STATE/.supervise-daemon.pid"
+        if ! { [ -f "$_dp" ] && kill -0 "$(cat "$_dp" 2>/dev/null)" 2>/dev/null; }; then
+          FM_ALWAYS_ON=1 nohup "$SCRIPT_DIR/fm-supervise-daemon.sh" >/dev/null 2>&1 &
+        fi
+      fi
       exit 0
     fi
     [ "$(date +%s)" -ge "$deadline" ] && break
@@ -197,6 +211,13 @@ fi
 # (--restart skips this: it just stopped this home's watcher and wants a fresh one.)
 if [ "$mode" = arm ] && healthy_watcher; then
   report_healthy
+  # Always-on: co-start the daemon if not already running.
+  if [ "${FM_ALWAYS_ON:-0}" = "1" ]; then
+    _dp="$STATE/.supervise-daemon.pid"
+    if ! { [ -f "$_dp" ] && kill -0 "$(cat "$_dp" 2>/dev/null)" 2>/dev/null; }; then
+      FM_ALWAYS_ON=1 nohup "$SCRIPT_DIR/fm-supervise-daemon.sh" >/dev/null 2>&1 &
+    fi
+  fi
   exit 0
 fi
 
@@ -233,6 +254,13 @@ while :; do
   if healthy_watcher; then
     if [ "$HEALTHY_PID" = "$child" ]; then
       echo "watcher: started pid=$child (beacon fresh)"
+      # Always-on: co-start the daemon now that the watcher is confirmed live.
+      if [ "${FM_ALWAYS_ON:-0}" = "1" ]; then
+        _dp="$STATE/.supervise-daemon.pid"
+        if ! { [ -f "$_dp" ] && kill -0 "$(cat "$_dp" 2>/dev/null)" 2>/dev/null; }; then
+          FM_ALWAYS_ON=1 nohup "$SCRIPT_DIR/fm-supervise-daemon.sh" >/dev/null 2>&1 &
+        fi
+      fi
       wait "$child"
       rc=$?
       print_watch_output "$child_out"
@@ -241,6 +269,13 @@ while :; do
     fi
     # Another watcher won the singleton; our child stood down. Report the live one.
     report_healthy
+    # Always-on: co-start the daemon if not already running.
+    if [ "${FM_ALWAYS_ON:-0}" = "1" ]; then
+      _dp="$STATE/.supervise-daemon.pid"
+      if ! { [ -f "$_dp" ] && kill -0 "$(cat "$_dp" 2>/dev/null)" 2>/dev/null; }; then
+        FM_ALWAYS_ON=1 nohup "$SCRIPT_DIR/fm-supervise-daemon.sh" >/dev/null 2>&1 &
+      fi
+    fi
     wait "$child" 2>/dev/null || true
     rm -f "$child_out" 2>/dev/null || true
     exit 0

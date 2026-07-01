@@ -128,17 +128,25 @@ Wakes are **queue-based**: the watcher writes to `.wake-queue` when an event fir
 Always run `bin/fm-wake-drain.sh` at the start of every turn to drain any wakes that fired since the last prompt.
 The `fm-watch` window in the firstmate tmux session holds the loop; if it is missing, `bin/fm-watch-arm.sh` recreates it automatically.
 
-**Limitation: no autonomous wake-up on OpenCode.**
+**Limitation: no autonomous wake-up on OpenCode without always-on mode.**
 The watcher accurately detects crewmate completions (`done:`, `needs-decision:`, `failed:`) and writes them to `state/.wake-queue`, but OpenCode's TUI mode has no mechanism to inject a message into the active session from a background process.
-Crewmate completions accumulate in the queue and are only surfaced when the captain next sends a message.
-During long pipeline phases (lint, document, CI wait) firstmate is effectively blind to crewmate state changes unless the captain checks in.
+Without always-on mode, crewmate completions accumulate in the queue and are only surfaced when the captain next sends a message.
 
-**Workaround:** Use `/afk` mode during long-running crewmate work. The away-mode daemon already solves this: it monitors the wake queue and injects escalations into the firstmate pane via `tmux send-keys`. With `/afk` active, crewmate `done:`, `blocked:`, and `needs-decision:` signals reach firstmate autonomously without captain intervention. This is the recommended pattern for any crewmate harness running long pipelines (15–20 min) on OpenCode.
+**Always-on daemon mode (recommended for OpenCode).**
+Set `FM_ALWAYS_ON=1` before arming the watcher to activate autonomous wake injection:
 
-**Forward paths (for future work):**
-- *Always-on daemon (best fit):* Extend the away-mode daemon to a lightweight "always-on" mode that injects only actionable wakes — no away-mode batching — without requiring `state/.afk` to be set. This would give firstmate autonomous wake-up during normal supervision on OpenCode.
-- *opencode serve mode:* If firstmate ran under `opencode serve`, a background file-watcher on `state/.wake-queue` could call `POST /session/{id}/message` to inject a wake phrase. The REST API is confirmed: `POST /session/{id}/message` with `{"parts":[{"type":"text","text":"..."}]}` triggers a full AI turn. Requires running firstmate differently.
-- *launchd WatchPaths:* A macOS `LaunchAgents` plist watching `state/.wake-queue` could fire a script that `tmux send-keys` into the firstmate window. No polling, low overhead. Requires one-time `launchctl load` setup.
+```sh
+FM_ALWAYS_ON=1 bin/fm-watch-arm.sh
+```
+
+With `FM_ALWAYS_ON=1`:
+- The daemon co-starts alongside the watcher automatically.
+- Actionable wakes (`done:`, `blocked:`, `needs-decision:`, `failed:`) are injected directly into the firstmate pane via `tmux send-keys` as they arrive.
+- The 90-second batching delay is bypassed — wakes reach firstmate immediately.
+- The watcher enters one-shot mode (same as under `/afk`) to prevent double-triage.
+- No `state/.afk` is set; the normal per-turn `bin/fm-wake-drain.sh` protocol is unchanged.
+
+Use `FM_ALWAYS_ON=1 bin/fm-watch-arm.sh` at session start and after every wake-handling turn whenever crewmates are in flight on OpenCode.
 
 ## pi (VERIFIED 2026-06-11)
 

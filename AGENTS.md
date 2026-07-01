@@ -157,7 +157,7 @@ The recorded harness is used for every dispatch until changed; a per-task instru
 Resolve `default` with `bin/fm-harness.sh`; resolve the active crewmate harness with `bin/fm-harness.sh crew`.
 
 Each adapter splits into mechanics and knowledge.
-The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spawn.sh`; the knowledge you need while supervising (busy signature, exit, interrupt, dialogs, quirks, skill invocation, resume) lives in the agent-only `harness-adapters` skill.
+The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spawn.sh`; the knowledge you need while supervising (busy signature, exit, interrupt, dialogs, quirks, skill invocation, resume, no-mistakes gate-response protocol, OpenCode queue-based watcher limitation, GitHub Actions pre-flight checklist, and kiro brief scaffold) lives in the agent-only `harness-adapters` skill.
 **Never dispatch a crewmate on an unverified adapter.**
 If `config/crew-harness` names an unverified one, tell the captain and fall back to your own harness until it is verified.
 If the captain asks for a new harness, load `harness-adapters`, verify it empirically with a trivial supervised task, then commit the script and knowledge changes.
@@ -329,7 +329,7 @@ Write the brief per section 11.
 
 ### Spawn
 
-Load `harness-adapters` before spawning or recovering any direct report so trust dialogs, verified adapters, and harness-specific behavior are handled correctly.
+Load `harness-adapters` before spawning or recovering any direct report so trust dialogs, verified adapters, harness-specific behavior, and the GitHub Actions pre-flight checklist are handled correctly.
 
 ```sh
 bin/fm-spawn.sh <id> projects/<repo>             # uses the active crewmate harness
@@ -384,7 +384,7 @@ Load `harness-adapters` for the target harness's skill invocation form; natural 
 
 The crewmate drives the no-mistakes pipeline (review, test, document, lint, push, PR, CI) itself.
 The ship brief intentionally does not restate no-mistakes gate mechanics; it points the crewmate to the version-matched SKILL.md loaded by `/no-mistakes`, `no-mistakes axi run --help`, and per-response `help` lines.
-Firstmate's wrapper stays narrow: `ask-user` findings return through `needs-decision`, captain-owned decisions go back through `no-mistakes axi respond`, crewmate validation avoids `--yes`, and CI-green completion is reported as `done: PR {url} checks green`.
+Firstmate's wrapper stays narrow: `ask-user` findings return through `needs-decision`, captain-owned decisions go back to the crewmate via `bin/fm-send.sh` so the crewmate runs `no-mistakes axi respond` itself (firstmate never runs `axi respond` from its own shell — see harness-adapters gate-response protocol), crewmate validation avoids `--yes`, and CI-green completion is reported as `done: PR {url} checks green`.
 Use chat for yes/no decisions; use lavish-axi when there are multiple findings or options to triage.
 
 Judge a validating crewmate by the run's step status, never by whether its shell is still running.
@@ -634,6 +634,8 @@ Scaffold with `bin/fm-brief.sh <id> <repo-name>` - it writes `data/<id>/brief.md
 The ship-brief Setup opens with a worktree-isolation assertion ahead of the branch step: the crewmate confirms it is in its own treehouse worktree, not the primary checkout, and stops with `blocked: launched in primary checkout, not an isolated worktree` if not - the upstream half of the worktree-tangle guard (section 8).
 For a ship task the definition of done is shaped by the project's delivery mode (section 6): `no-mistakes` stops after the implementation commit, then firstmate triggers the harness-appropriate no-mistakes validation pipeline; `direct-PR` has the crewmate push and open the PR itself, and `local-only` has it stop at "ready in branch" for firstmate to review and merge locally.
 The no-mistakes brief points to no-mistakes' version-matched guidance and keeps only firstmate-specific wrapper rules for `ask-user` escalation, `--yes` avoidance, and the CI-green done line.
+It also includes silence guidance for the 5–20 min document/CI pipeline steps and the amend-and-force-push recipe for when `git push no-mistakes <branch>` says "Everything up-to-date" (the post-receive hook only fires on new objects; amend the commit to produce a new SHA and force-push to re-trigger).
+For kiro crewmates on a `no-mistakes`-mode brief, replace the three `/no-mistakes` slash-command references in the DOD section with `no-mistakes axi run --intent "..."` before spawning (harness-adapters kiro brief scaffold note).
 The scaffold reads the mode via `fm-project-mode.sh`, so you do not pass it.
 Ship briefs also include the project-memory contract: run `bin/fm-ensure-agents-md.sh` when the project already has agent-memory files or when the task produced durable project-intrinsic knowledge, then record proportionate learnings in `AGENTS.md`.
 For scout tasks add `--scout`: the scaffold swaps the definition of done for the report contract (findings to `data/<id>/report.md`, no branch, no push, no PR) and declares the worktree scratch; scout is mode-agnostic.
@@ -659,7 +661,7 @@ It performs only fast-forward self-updates of firstmate and registered secondmat
 
 These skills are not captain-invocable; they are conditional operating references you must load at the trigger points below.
 
-- `harness-adapters` - load before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter.
+- `harness-adapters` - load before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains the no-mistakes gate-response protocol, the OpenCode queue-based watcher limitation and workaround, the GitHub Actions pre-flight checklist, and the kiro brief scaffold note.
 - `stuck-crewmate-recovery` - load after a stale wake, looping pane, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer.
 - `secondmate-provisioning` - load before creating, seeding, validating, recovering, handing backlog to, or retiring a secondmate home, and before editing `data/secondmates.md`.
 - `fmx-respond` - load on an `x-mention <request_id>` `check:` wake to classify the mention, act on actionable requests through the normal lifecycle, and post or preview a public-safe X reply reporting the outcome (section 14); relevant only when X mode is on.

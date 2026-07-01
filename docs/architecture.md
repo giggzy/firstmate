@@ -31,6 +31,12 @@ The daemon escalates only captain-relevant events as one batched, single-line di
 Its injection path shares `bin/fm-tmux-lib.sh` with `fm-send.sh`, so dim-ghost-aware and border-aware composer detection plus verified submit retry stay consistent; stalled escalation delivery raises `state/.subsuper-inject-wedged` after `FM_MAX_DEFER_SECS` instead of silently deferring forever.
 `fm-send.sh` selects a pre-Enter popup-settle for slash commands and for codex `$...` skill invocations using the target's recorded `harness=` meta, then adds its own `FM_SEND_SETTLE` pause after successful text sends so immediate peeks catch the receiving turn starting; the sub-supervisor uses only the shared submit core and does not pay that post-submit pause.
 
+**OpenCode watcher limitation.**
+On OpenCode, the watcher accurately detects crewmate completions and writes them to `state/.wake-queue`, but the TUI has no mechanism to inject a message into the active session from a background process.
+Crewmate completions accumulate in the queue and are only surfaced when the captain next sends a message.
+The recommended workaround for any crewmate harness running long pipelines on OpenCode is `/afk` mode: the away-mode daemon monitors the queue and injects escalations autonomously via `tmux send-keys`.
+The full limitation description and forward paths (always-on daemon, opencode serve mode, launchd WatchPaths) are in the opencode section of [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
+
 ## Worktrees, not branches in your checkout
 
 Crewmates never intentionally touch your project clone; [treehouse](https://github.com/kunchenguid/treehouse) pools clean worktrees so parallel tasks on one repo cannot collide.

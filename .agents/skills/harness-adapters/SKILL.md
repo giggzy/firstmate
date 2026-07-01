@@ -40,7 +40,28 @@ Natural language is acceptable if uncertain.
 - codex: `$<skill>`, for example `$no-mistakes`; `/<skill>` is claude-only and codex rejects it as "Unrecognized command".
 - opencode: no separate verified skill invocation beyond normal slash-command behavior; use natural language if the exact skill command is uncertain.
 - pi: no separate verified skill invocation beyond normal command behavior; use natural language if the exact skill command is uncertain.
-- kiro: skills are installed in `~/.kiro/skills/`; invocation is likely `/no-mistakes` (same slash-command convention as claude); not yet empirically verified through a full validation run — use natural language if uncertain.
+- kiro: skills are installed in `~/.kiro/skills/`; kiro does NOT respond to `/no-mistakes` as a slash-command invocation — crewmates on kiro ignore the slash and instead run `no-mistakes axi run --intent "..."` directly from the shell. This is verified: both crewmates in the 2026-07-01 smoke test skipped the slash and used the CLI path successfully. Brief kiro crewmates to use `no-mistakes axi run --intent "..."` explicitly; do not use `/no-mistakes` in kiro briefs.
+
+## no-mistakes gate-response protocol (all harnesses)
+
+When a no-mistakes gate surfaces a `needs-decision` finding, firstmate relays it to the captain, gets the decision, then **steers the crewmate to respond** — it does NOT run `no-mistakes axi respond` from its own shell.
+Running `axi respond` from firstmate's shell advances the pipeline gate but leaves the crewmate idle watching an unexpected state; the crewmate needs a steer to re-attach, and the pipeline stays fragile until it does.
+This invariant applies regardless of crewmate harness (claude, codex, kiro, pi).
+
+Correct steer pattern — adapt the action to match the captain's decision:
+
+```sh
+# captain approved a fix:
+bin/fm-send.sh fm-<id> 'the captain approved: fix it. Run: no-mistakes axi respond --action fix. Then continue driving the pipeline.'
+
+# captain approved as-is (no changes needed):
+bin/fm-send.sh fm-<id> 'the captain approved: accept as-is. Run: no-mistakes axi respond --action approve. Then continue driving the pipeline.'
+
+# captain chose to skip this step:
+bin/fm-send.sh fm-<id> 'the captain decided to skip this step. Run: no-mistakes axi respond --action skip. Then continue driving the pipeline.'
+```
+
+The crewmate runs `axi respond` itself, stays in the driver seat, and the pipeline stays coherent throughout.
 
 ## claude (VERIFIED)
 
@@ -107,6 +128,18 @@ Wakes are **queue-based**: the watcher writes to `.wake-queue` when an event fir
 Always run `bin/fm-wake-drain.sh` at the start of every turn to drain any wakes that fired since the last prompt.
 The `fm-watch` window in the firstmate tmux session holds the loop; if it is missing, `bin/fm-watch-arm.sh` recreates it automatically.
 
+**Limitation: no autonomous wake-up on OpenCode.**
+The watcher accurately detects crewmate completions (`done:`, `needs-decision:`, `failed:`) and writes them to `state/.wake-queue`, but OpenCode's TUI mode has no mechanism to inject a message into the active session from a background process.
+Crewmate completions accumulate in the queue and are only surfaced when the captain next sends a message.
+During long pipeline phases (lint, document, CI wait) firstmate is effectively blind to crewmate state changes unless the captain checks in.
+
+**Workaround:** Use `/afk` mode during long-running crewmate work. The away-mode daemon already solves this: it monitors the wake queue and injects escalations into the firstmate pane via `tmux send-keys`. With `/afk` active, crewmate `done:`, `blocked:`, and `needs-decision:` signals reach firstmate autonomously without captain intervention. This is the recommended pattern for any crewmate harness running long pipelines (15–20 min) on OpenCode.
+
+**Forward paths (for future work):**
+- *Always-on daemon (best fit):* Extend the away-mode daemon to a lightweight "always-on" mode that injects only actionable wakes — no away-mode batching — without requiring `state/.afk` to be set. This would give firstmate autonomous wake-up during normal supervision on OpenCode.
+- *opencode serve mode:* If firstmate ran under `opencode serve`, a background file-watcher on `state/.wake-queue` could call `POST /session/{id}/message` to inject a wake phrase. The REST API is confirmed: `POST /session/{id}/message` with `{"parts":[{"type":"text","text":"..."}]}` triggers a full AI turn. Requires running firstmate differently.
+- *launchd WatchPaths:* A macOS `LaunchAgents` plist watching `state/.wake-queue` could fire a script that `tmux send-keys` into the firstmate window. No polling, low overhead. Requires one-time `launchctl load` setup.
+
 ## pi (VERIFIED 2026-06-11)
 
 | Fact | Value |
@@ -135,7 +168,7 @@ Pi sets `PI_CODING_AGENT=true` for its children; this is its harness-detection e
 | Idle-pane signature | `ask a question or describe a task` (input box placeholder) |
 | Exit command | `/quit` |
 | Interrupt | single Escape (shows `● Cancelled streaming` then returns to idle) |
-| Skill invocation | `/no-mistakes` (skills in `~/.kiro/skills/`; not yet verified through a full validation run) |
+| Skill invocation | CLI only: `no-mistakes axi run --intent "..."` — `/no-mistakes` slash-command does NOT fire in kiro (verified 2026-07-01) |
 | Env marker | `KIRO_SESSION_ID` (set for child processes) |
 | Resume | `kiro-cli --resume-id <session-id>` (id printed on exit) |
 
@@ -156,6 +189,12 @@ Kiro V2 exposes no per-turn shell hook; the `hooks` field in agent configs is pr
 Stale detection in `fm-watch.sh` covers the idle-crewmate case (threshold `FM_STALE_ESCALATE_SECS`, default 240s).
 The crewmate's `done:` status write still wakes the watcher immediately at the end of its work, so end-of-task detection is unaffected.
 
+**kiro brief scaffold note.**
+When generating a brief for a kiro ship task using `no-mistakes` mode, replace the `/no-mistakes` slash-command references in the no-mistakes DOD with `no-mistakes axi run --intent "..."` before spawning.
+The brief template is not harness-conditional; firstmate must make this substitution manually.
+For a `no-mistakes`-mode brief, the three occurrences are: the validation trigger in the DOD instruction ("run /no-mistakes"), the mechanics description ("it loads when you invoke /no-mistakes"), and the done-line example.
+Search the generated `data/<id>/brief.md` Definition of done section for `/no-mistakes` and replace each with the CLI equivalent before handing it to the crewmate.
+
 **MCP disabled.**
 NYU Langone's AWS org has MCP disabled; the warning `MCP disabled by your administrator` appears in the footer but does not affect built-in tools (shell, file read/write, grep, glob, etc.).
 
@@ -163,3 +202,23 @@ NYU Langone's AWS org has MCP disabled; the warning `MCP disabled by your admini
 The idle input box shows `ask a question or describe a task ↵` at normal intensity.
 `fm-tmux-lib.sh`'s `FM_TMUX_BUSY_REGEX_DEFAULT` includes this pattern so the post-Enter composer check treats it as "empty" (not pending input) on a fast kiro turn where the placeholder reappears before the 0.4s sleep.
 This pattern is intentionally absent from `fm-watch.sh`'s `BUSY_REGEX` so stale detection still fires when the crewmate is genuinely idle.
+
+## Pre-flight checklist (all harnesses, GitHub Actions CI)
+
+Run this before spawning any ship crewmate on a project that uses GitHub Actions for CI.
+Disabled workflows block CI silently forever on no-mistakes — there is no error, the `ci` step simply polls indefinitely.
+
+1. **GitHub Actions enabled-status.**
+   Any non-active workflow is a blocker:
+   ```sh
+   gh api repos/<owner>/<repo>/actions/workflows --jq '.workflows[] | select(.state != "active") | .name'
+   ```
+   If any are listed, re-enable them:
+   ```sh
+   gh api --method PUT repos/<owner>/<repo>/actions/workflows/<id>/enable
+   ```
+   Verify by re-querying (the PUT is deterministic; no test PR needed):
+   ```sh
+   gh api repos/<owner>/<repo>/actions/workflows/<id> --jq '{name,state}'
+   ```
+   Workflow IDs: `gh api repos/<owner>/<repo>/actions/workflows --jq '.workflows[] | {id, name, state}'`.

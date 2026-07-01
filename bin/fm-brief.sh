@@ -222,7 +222,7 @@ the post-receive hook only fires when new objects are received.
 Fix: amend your commit to produce a new SHA and force-push:
 \`\`\`
 git commit --amend --no-edit
-git push no-mistakes fm/<id> --force-with-lease
+git push no-mistakes fm/$ID --force-with-lease
 \`\`\`
 This re-triggers the hook. Do NOT delete and re-clone the branch from the bare repo.
 

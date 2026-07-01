@@ -201,7 +201,7 @@ If the captain expresses a standing dispatch preference such as "use grok for ne
 Crewmates default to the same harness you are running on.
 The captain may override the static default at any time, typically at bootstrap: record the choice in `config/crew-harness` (a single adapter name; absent or `default` means mirror your own harness).
 Resolve `default` with `bin/fm-harness.sh`; resolve the active static crewmate harness with `bin/fm-harness.sh crew`.
-Verified adapter names are `claude`, `codex`, `opencode`, `pi`, and `grok`.
+Verified adapter names are `claude`, `codex`, `opencode`, `pi`, `grok`, and `kiro`.
 
 ### Crew dispatch profiles
 
@@ -294,9 +294,9 @@ When changing inherited config mid-session, prefer `bin/fm-config-push.sh` over 
 It reports `pushed`, `unchanged`, `skipped`, or `error` for each declared item in each live secondmate home; skipped non-ignored items are warnings and real copy/remove errors make the command exit non-zero.
 
 Each adapter splits into mechanics and knowledge.
-The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spawn.sh`; the knowledge you need while supervising (busy signature, exit, interrupt, dialogs, quirks, skill invocation, resume) lives in the agent-only `harness-adapters` skill.
-**Never dispatch a crewmate or secondmate on an unverified adapter.**
-If `config/crew-harness` or `config/secondmate-harness` names an unverified one, tell the captain and fall back to your own harness until it is verified.
+The mechanics (launch command, autonomy flag, turn-end hook) live in `bin/fm-spawn.sh`; the knowledge you need while supervising (busy signature, exit, interrupt, dialogs, quirks, skill invocation, resume, no-mistakes gate-response protocol, OpenCode queue-based watcher limitation, GitHub Actions pre-flight checklist, and kiro brief scaffold) lives in the agent-only `harness-adapters` skill.
+**Never dispatch a crewmate on an unverified adapter.**
+If `config/crew-harness` names an unverified one, tell the captain and fall back to your own harness until it is verified.
 If the captain asks for a new harness, load `harness-adapters`, verify it empirically with a trivial supervised task, then commit the script and knowledge changes.
 Load `harness-adapters` before any spawn, recovery, trust-dialog handling, harness-specific skill invocation, interrupt, exit, resume, or adapter verification.
 

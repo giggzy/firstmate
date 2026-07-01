@@ -141,7 +141,11 @@ launch_template() {
     # which fm-spawn writes the first time it launches a kiro crewmate (idempotent).
     # No turn-end hook: kiro V2 has no exposed per-turn shell hook; stale detection
     # in fm-watch.sh covers the idle-crewmate case (threshold: FM_STALE_ESCALATE_SECS).
-    kiro) printf '%s' '${KIRO_CA_BUNDLE:+SSL_CERT_FILE="$KIRO_CA_BUNDLE" }kiro-cli chat --trust-all-tools "$(cat __BRIEF__)"' ;;
+    # SSL_CERT_FILE is set explicitly (not via ${VAR:+...} expansion) because zsh does
+    # not word-split parameter-expansion results, so "${VAR:+KEY=VAL }cmd" becomes a
+    # single token and fails with "command not found: KEY=VAL cmd". Using a literal
+    # KEY="${OTHER_VAR:-}" assignment prefix is correctly parsed in both bash and zsh.
+    kiro) printf '%s' 'SSL_CERT_FILE="${KIRO_CA_BUNDLE:-}" kiro-cli chat --trust-all-tools "$(cat __BRIEF__)"' ;;
     pi)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'pi "$(cat __BRIEF__)"'

@@ -109,7 +109,11 @@ TRIAGE_LOG_MAX_BYTES=${FM_WATCH_TRIAGE_LOG_MAX_BYTES:-262144}
 # watcher and owns triage, so the watcher must behave one-shot (enqueue + exit on
 # every wake) and let the daemon classify - never absorb here, or the daemon's
 # digest/injection layer would never see the wake.
-afk_present() { [ -e "$STATE/.afk" ]; }
+afk_present() {
+  [ -e "$STATE/.afk" ] && return 0
+  [ "${FM_ALWAYS_ON:-0}" = "1" ] && return 0
+  return 1
+}
 
 # Append one line to the triage debug log explaining an absorbed (benign) wake,
 # size-capped so a long benign stretch cannot grow it without bound. Best-effort:

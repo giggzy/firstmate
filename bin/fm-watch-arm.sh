@@ -94,6 +94,15 @@ report_healthy() {
   echo "watcher: healthy pid=$HEALTHY_PID (beacon ${age}s)"
 }
 
+# Co-start the daemon when FM_ALWAYS_ON=1 and it is not already live.
+costart_daemon_if_needed() {
+  [ "${FM_ALWAYS_ON:-0}" = "1" ] || return 0
+  local _dp="$STATE/.supervise-daemon.pid"
+  if ! { [ -f "$_dp" ] && kill -0 "$(cat "$_dp" 2>/dev/null)" 2>/dev/null; }; then
+    FM_ALWAYS_ON=1 nohup "$SCRIPT_DIR/fm-supervise-daemon.sh" >/dev/null 2>&1 &
+  fi
+}
+
 watch_output_has_wake() {
   local out=$1
   grep -Eq '^(signal:|stale:|check:|heartbeat($|:))' "$out" 2>/dev/null
@@ -143,6 +152,7 @@ if [ "$_own_harness" = "opencode" ]; then
   # arm only: if a healthy watcher is already running, do not create a duplicate.
   if [ "$mode" = arm ] && healthy_watcher; then
     report_healthy
+    costart_daemon_if_needed
     exit 0
   fi
 
@@ -151,7 +161,7 @@ if [ "$_own_harness" = "opencode" ]; then
   # its singleton lock handles any startup race.
   tmux kill-window -t "$_fm_watch_target" 2>/dev/null || true
   tmux new-window -t "$_fm_session" -n "$_fm_watch_window" \
-    "cd $(printf '%q' "$FM_HOME") && while true; do $(printf '%q' "$WATCH"); sleep 1; done" 2>/dev/null || {
+    "cd $(printf '%q' "$FM_HOME") && export FM_ALWAYS_ON=${FM_ALWAYS_ON:-0}; while true; do $(printf '%q' "$WATCH"); sleep 1; done" 2>/dev/null || {
     echo "watcher: FAILED - no live watcher with a fresh beacon"
     exit 1
   }
@@ -161,6 +171,7 @@ if [ "$_own_harness" = "opencode" ]; then
   while :; do
     if healthy_watcher; then
       echo "watcher: started pid=$HEALTHY_PID (beacon fresh)"
+      costart_daemon_if_needed
       exit 0
     fi
     [ "$(date +%s)" -ge "$deadline" ] && break
@@ -197,6 +208,7 @@ fi
 # (--restart skips this: it just stopped this home's watcher and wants a fresh one.)
 if [ "$mode" = arm ] && healthy_watcher; then
   report_healthy
+  costart_daemon_if_needed
   exit 0
 fi
 
@@ -233,6 +245,7 @@ while :; do
   if healthy_watcher; then
     if [ "$HEALTHY_PID" = "$child" ]; then
       echo "watcher: started pid=$child (beacon fresh)"
+      costart_daemon_if_needed
       wait "$child"
       rc=$?
       print_watch_output "$child_out"
@@ -241,6 +254,7 @@ while :; do
     fi
     # Another watcher won the singleton; our child stood down. Report the live one.
     report_healthy
+    costart_daemon_if_needed
     wait "$child" 2>/dev/null || true
     rm -f "$child_out" 2>/dev/null || true
     exit 0

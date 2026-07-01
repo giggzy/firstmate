@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fm-supervise-daemon.sh — presence-gated sub-supervisor (closes #27's P2).
+# fm-supervise-daemon.sh — sub-supervisor daemon (closes #27's P2).
 #
 # Wraps bin/fm-watch.sh: runs it as a child, classifies each wake reason, and
 # either SELF-HANDLES the routine majority in bash (no firstmate turn) or
@@ -10,14 +10,14 @@
 # check-output events reach the LLM, and even then as one pre-read digest per
 # batch window.
 #
-# PRESENCE-GATING (the /afk contract). The daemon is the away-mode engine: it
-# injects ONLY when the durable away-mode flag state/.afk is present. Invoking
-# the /afk skill sets that flag and starts this daemon; any real (unmarked)
-# user message clears it and firstmate resumes full responsiveness.
-# When afk is off, normal fm-watch.sh always-on triage is the active mechanism.
-# Any buffered daemon escalations that remain while afk is off survive in
-# state/.subsuper-escalations and are flushed on the next "while you were out"
-# catch-up or when afk is re-entered.
+# INJECTION GATE. The daemon injects when EITHER the durable away-mode flag
+# state/.afk is present (the /afk contract) OR the FM_ALWAYS_ON=1 environment
+# variable is set (the always-on OpenCode mode). In always-on mode the daemon
+# co-starts alongside the watcher via fm-watch-arm.sh, bypasses the 90s batch
+# window (flushes immediately), and injects actionable wakes directly into the
+# firstmate pane so wakes reach firstmate without waiting for a user turn.
+# When both afk and always-on are off, the daemon self-handles and stays quiet;
+# buffered escalations survive in state/.subsuper-escalations for the next flush.
 #
 # IN-BAND SENTINEL MARKER. Every daemon injection is prefixed with
 # FM_INJECT_MARK (ASCII unit separator, 0x1f) — a byte a human would never type
@@ -143,7 +143,7 @@ CRASH_NORMAL_SLEEP_DEFAULT=5
 LOG_MAX_BYTES_DEFAULT=1048576
 LOG_KEEP_LINES_DEFAULT=2000
 
-# --- presence-gating + sentinel marker --------------------------------------
+# --- injection gate + sentinel marker --------------------------------------
 # The in-band sentinel: ASCII unit separator (0x1f). Invisible and untypable on
 # a normal keyboard, so no real user message starts with it. Every daemon
 # injection is prefixed with this byte; firstmate treats a leading marker as an
@@ -478,15 +478,19 @@ _oldest_line_age() {  # <buf> -> seconds since the oldest buffered item first ar
 #  3) heartbeat scan: every HEARTBEAT_SCAN_SECS, grep state/*.status for a
 #     captain-relevant line the per-wake classifier missed and escalate it.
 housekeeping() {  # <state>
-  local state=$1 now due f key task win marker age last max_defer oldest
+  local state=$1 now due f key task win marker age last max_defer oldest _eff_batch
   now=$(_now)
+  # In always-on mode flush escalations immediately (no batching delay) so
+  # firstmate is woken as promptly as in normal watcher triage.
+  _eff_batch="${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}"
+  [ "${FM_ALWAYS_ON:-0}" = "1" ] && _eff_batch=0
 
   # (1) batch flush
-  if [ "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" -le 0 ]; then
+  if [ "$_eff_batch" -le 0 ]; then
     escalate_flush "$state" || true
   else
     due=$(_oldest_line_age "$state/.subsuper-escalations")
-    if [ "$due" -ge "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" ]; then
+    if [ "$due" -ge "$_eff_batch" ]; then
       escalate_flush "$state" || true
     fi
   fi
@@ -495,7 +499,8 @@ housekeeping() {  # <state>
   # retry the normal delivery path. If that still cannot confirm, raise a loud
   # wedge alarm while preserving the buffer.
   max_defer=${FM_MAX_DEFER_SECS:-$MAX_DEFER_SECS_DEFAULT}
-  if afk_active "$state" && [ "$max_defer" -gt 0 ] && [ -s "$state/.subsuper-escalations" ]; then
+  if { afk_active "$state" || [ "${FM_ALWAYS_ON:-0}" = "1" ]; } \
+     && [ "$max_defer" -gt 0 ] && [ -s "$state/.subsuper-escalations" ]; then
     oldest=$(_oldest_line_age "$state/.subsuper-escalations")
     # Throttle the alarm to once per max-defer window (the wedge marker doubles
     # as the throttle). A successful flush clears the buffer; a failed one alarms
@@ -581,10 +586,13 @@ window_for_task() {  # <task-key>
 inject_msg() {  # <message> [state]
   local msg=$1 state target retries sleep_s verdict
   state="${2:-$(_state_root)}"
-  # (1) Presence-gate: inject ONLY when afk is active. When afk is off, the
-  # daemon self-handles and stays quiet; firstmate drives the normal always-on
-  # watcher triage. Escalations buffer and survive for the next catch-up flush.
-  afk_active "$state" || { log "inject deferred: afk inactive"; return 1; }
+  # (1) Presence-gate: inject ONLY when afk is active OR always-on mode is set.
+  # When both are off, the daemon self-handles and stays quiet; firstmate drives
+  # the normal watcher triage. Escalations buffer and survive for the next flush.
+  if ! afk_active "$state" && [ "${FM_ALWAYS_ON:-0}" != "1" ]; then
+    log "inject deferred: afk inactive (always-on not set)"
+    return 1
+  fi
   # (2) Single-line digest: collapse any embedded newlines so submission via
   # send-keys + Enter is unambiguous regardless of how the TUI composer treats
   # them. Then prepend the sentinel marker — firstmate's afk-exit contract
@@ -675,7 +683,7 @@ handle_wake() {  # <reason> <state>
     # housekeeping re-escalates the same pane as a false wedge later.
     [ "$kind" = "stale" ] && stale_marker_remove "$arg" "$state"
     mark_escalated_seen "$kind" "$arg" "$state"
-    [ "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" -le 0 ] && { escalate_flush "$state" || true; }
+    { [ "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" -le 0 ] || [ "${FM_ALWAYS_ON:-0}" = "1" ]; } && { escalate_flush "$state" || true; }
   else
     # Transient (non-terminal) stale: record/refresh the marker so housekeeping
     # can age it; the persistence recheck, not this wake, escalates a wedge.
@@ -696,6 +704,63 @@ trim_log() {
   [ "$sz" -ge "${FM_LOG_MAX_BYTES:-$LOG_MAX_BYTES_DEFAULT}" ] || return 0
   tmp=$(mktemp "${TMPDIR:-/tmp}/fm-daemon-log.XXXXXX") || return 0
   tail -n "${FM_LOG_KEEP_LINES:-$LOG_KEEP_LINES_DEFAULT}" "$LOG" >"$tmp" 2>/dev/null && mv -f "$tmp" "$LOG"
+}
+
+# queue_consumer_loop: always-on mode on OpenCode.
+# The tmux window already runs fm-watch.sh in a loop and writes actionable wakes
+# to state/.wake-queue. This loop is a pure queue consumer — it polls the queue,
+# classifies each entry as captain-relevant or self-handled, and injects any
+# escalations immediately. It never starts fm-watch.sh (which would compete for
+# the singleton lock and almost always lose to the tmux window loop).
+queue_consumer_loop() {  # <state>
+  local state=$1 queue kind key payload reason line
+  queue="${FM_WAKE_QUEUE:-$state/.wake-queue}"
+  local poll_secs="${FM_POLL:-15}"
+  [ "$poll_secs" -gt 5 ] && poll_secs=5  # cap at 5s for responsiveness in always-on
+
+  log "queue-consumer loop started (poll=${poll_secs}s)"
+  while true; do
+    if ! tmux display-message -p -t "$TARGET" '#{pane_id}' >/dev/null 2>&1; then
+      sleep "$INJECT_FAIL_SLEEP"
+      continue
+    fi
+
+    # Drain the queue: read and clear atomically under the queue lock.
+    if fm_lock_try_acquire "$FM_WAKE_QUEUE_LOCK" 2>/dev/null; then
+      local tmp_drain
+      tmp_drain=$(mktemp "${TMPDIR:-/tmp}/fm-wake-drain.XXXXXX" 2>/dev/null) || {
+        fm_lock_release "$FM_WAKE_QUEUE_LOCK" 2>/dev/null || true
+        sleep "$poll_secs"; continue
+      }
+      if [ -s "$queue" ]; then
+        mv "$queue" "$tmp_drain" 2>/dev/null || true
+        : > "$queue" 2>/dev/null || true
+      else
+        rm -f "$tmp_drain"; fm_lock_release "$FM_WAKE_QUEUE_LOCK" 2>/dev/null || true
+        sleep "$poll_secs"; continue
+      fi
+      fm_lock_release "$FM_WAKE_QUEUE_LOCK" 2>/dev/null || true
+
+      # Process each drained entry: classify and escalate captain-relevant ones.
+      while IFS=$'\t' read -r _ _ kind key payload || [ -n "$payload" ]; do
+        [ -z "$kind" ] && continue
+        reason="${kind}: ${payload}"
+        log "queue-consumer: $reason"
+        handle_wake "$reason" "$state"
+      done < "$tmp_drain"
+      rm -f "$tmp_drain"
+
+      # Flush escalations immediately (always-on: no batching).
+      escalate_flush "$state" || true
+      trim_log
+    fi
+
+    if [ "$(_file_age "$state/.subsuper-last-housekeep")" -ge "${FM_HOUSEKEEPING_TICK:-$HOUSEKEEPING_TICK_DEFAULT}" ]; then
+      _now > "$state/.subsuper-last-housekeep"
+      housekeeping "$state"
+    fi
+    sleep "$poll_secs"
+  done
 }
 
 # ============================================================================
@@ -770,7 +835,11 @@ fm_super_main() {
 
   local afk_status="off"
   afk_active "$STATE" && afk_status="on"
-  log "daemon starting (pid $$); target=$TARGET; target_source=$target_source; afk=$afk_status; inject_skip='${FM_INJECT_SKIP:-$INJECT_SKIP_DEFAULT}'; stale_escalate=${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}s; batch=${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}s"
+  local always_on_label="off"
+  [ "${FM_ALWAYS_ON:-0}" = "1" ] && always_on_label="on"
+  local _log_batch="${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}"
+  [ "${FM_ALWAYS_ON:-0}" = "1" ] && _log_batch="0 (always-on)"
+  log "daemon starting (pid $$); target=$TARGET; target_source=$target_source; afk=$afk_status; always_on=$always_on_label; inject_skip='${FM_INJECT_SKIP:-$INJECT_SKIP_DEFAULT}'; stale_escalate=${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}s; batch=${_log_batch}s"
 
   # --- shutdown: flush buffered escalations, reap child, release lock -------
   local WATCHER_PID="" CUR_TMP=""
@@ -790,6 +859,21 @@ fm_super_main() {
     exit 0
   }
   trap cleanup TERM INT
+
+  # --- always-on + OpenCode: queue consumer (no watcher lock competition) ---
+  # On OpenCode the tmux window already runs fm-watch.sh in a loop and owns the
+  # watcher singleton. Starting a second fm-watch.sh inside the daemon would
+  # compete for that lock and almost always lose (1s tmux restart vs 15s backoff).
+  # Instead, run a pure queue-consumer loop: drain state/.wake-queue directly,
+  # classify entries, and inject captain-relevant wakes immediately.
+  local _own_harness
+  _own_harness="$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || echo unknown)"
+  if [ "${FM_ALWAYS_ON:-0}" = "1" ] && [ "$_own_harness" = "opencode" ]; then
+    log "always-on + opencode: starting queue-consumer loop (no watcher child)"
+    local INJECT_FAIL_SLEEP=${FM_INJECT_FAIL_SLEEP:-$INJECT_FAIL_SLEEP_DEFAULT}
+    queue_consumer_loop "$STATE"
+    exit 0
+  fi
 
   # --- crash-loop guard -----------------------------------------------------
   local crash_times=() backoff_secs=$CRASH_NORMAL_SLEEP

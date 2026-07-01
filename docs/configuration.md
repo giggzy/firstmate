@@ -127,7 +127,8 @@ FM_COMPOSER_IDLE_RE=    # optional empty-composer regex, applied after dim-ghost
 FM_SEND_RETRIES=3       # fm-send Enter-retry attempts after typing the line once
 FM_SEND_SLEEP=0.4       # seconds between fm-send submit checks
 FM_SEND_SETTLE=1        # seconds fm-send waits after a successful text submit; 0 disables
-# sub-supervisor (bin/fm-supervise-daemon.sh); presence-gated via /afk
+# sub-supervisor (bin/fm-supervise-daemon.sh); presence-gated via /afk or FM_ALWAYS_ON=1
+FM_ALWAYS_ON=1                     # activate always-on daemon mode: daemon co-starts with watcher, injects actionable wakes immediately without /afk or batching (OpenCode recommended)
 FM_SUPERVISOR_TARGET=firstmate:0   # supervisor tmux target (override; auto-discovers from $TMUX_PANE)
 FM_INJECT_SKIP=heartbeat           # |-prefixes force-self-handled bypassing classification; empty disables
 FM_ESCALATE_BATCH_SECS=90          # buffer window for batched escalation digests; 0 = flush immediately

@@ -463,6 +463,7 @@ Only an actionable wake is written to the durable queue at `state/.wake-queue` -
 That is what eliminates the quiet-stretch churn: during a long crew validation the benign `turn-ended`/`working:`/non-terminal-stale/no-change-heartbeat wakes are all absorbed in bash, the liveness beacon (`state/.last-watcher-beat`) stays fresh the whole time so `fm-guard.sh` never false-alarms, and your LLM is woken only when something genuinely needs you.
 The classifier lives in `bin/fm-classify-lib.sh` and is shared: the same captain-relevant verb set and signal/stale/heartbeat predicates back both this always-on watcher and the away-mode daemon, so the two can never drift apart.
 While `state/.afk` exists the daemon owns supervision, so the watcher reverts to one-shot - it surfaces every wake for the daemon to classify - and never double-triages.
+**Always-on daemon mode (OpenCode).** On OpenCode the watcher is queue-based and cannot push notifications to firstmate between turns (see `harness-adapters`). Set `FM_ALWAYS_ON=1` in the environment before calling `bin/fm-watch-arm.sh` to activate always-on daemon mode: the daemon co-starts alongside the watcher, injects actionable wakes (`done:`, `blocked:`, `needs-decision:`, `failed:`) directly into the firstmate pane via `tmux send-keys` as they arrive, and bypasses the 90-second batching delay so wakes reach firstmate immediately. The watcher automatically enters one-shot mode when `FM_ALWAYS_ON=1` (same as under `/afk`) to prevent double-triage. No `state/.afk` is set; the normal per-turn `fm-wake-drain.sh` protocol is unchanged. Use `FM_ALWAYS_ON=1 bin/fm-watch-arm.sh` at session start and after every wake-handling turn whenever crewmates are in flight on OpenCode.
 At the start of every wake-handling turn and every recovery turn, run `bin/fm-wake-drain.sh` before peeking panes, reading status files beyond the reason line, or starting new work.
 The printed reason line is still useful, but the drained queue is the lossless backlog.
 **Keep exactly one live cycle.**
@@ -546,13 +547,15 @@ Silence is the correct state while a healthy background watcher is waiting.
 
 ### Away-mode stub
 
-Invoke the `/afk` skill when the captain says `/afk`, says they are going afk, `state/.afk` exists, an incoming message starts with `FM_INJECT_MARK`, or any `state/.subsuper-*` marker is involved.
+Invoke the `/afk` skill when the captain says `/afk`, says they are going afk, `state/.afk` exists, an incoming message starts with `FM_INJECT_MARK` **and `state/.afk` is set**, or any `state/.subsuper-*` marker is involved.
+In always-on mode (`FM_ALWAYS_ON=1`, no `state/.afk`), the daemon also injects messages prefixed with `FM_INJECT_MARK`; treat those as wake notifications to drain and handle — do NOT load `/afk` or treat them as afk-mode escalations.
 The skill owns the full daemon procedure: classification policy, batching, injection hardening, max-defer, verified submit, marker stripping, portable lock, dedupe, target discovery, reliability properties, and `FM_INJECT_SKIP`.
 Inline facts that must survive without a loaded skill:
 
 - Every daemon injection is prefixed with `FM_INJECT_MARK`, ASCII unit separator `0x1f`, so internal escalations are distinguishable from a captain message.
 - While `state/.afk` exists, the daemon owns the watcher; do not separately arm `fm-watch-arm.sh` or `fm-watch.sh`.
-- If firstmate receives a marked message while afk is active, it is an internal escalation: stay afk and process it.
+- If firstmate receives a marked message **and `state/.afk` is set**, it is an afk-mode escalation: stay afk and process it.
+- If firstmate receives a marked message and `state/.afk` is **not** set, it is an always-on daemon wake: drain `state/.wake-queue` with `bin/fm-wake-drain.sh`, handle the actionable wakes, and re-arm `FM_ALWAYS_ON=1 bin/fm-watch-arm.sh`.
 - If the message starts with `/afk`, stay afk and refresh the flag.
 - Any other unmarked message means the captain is back: clear `state/.afk`, stop the daemon, flush catch-up from `state/.wake-queue`, `state/.subsuper-escalations`, and `state/.subsuper-inject-wedged`, then re-arm normal watcher supervision.
 - Afk never changes approval authority; PR merges, ask-user findings, destructive actions, irreversible actions, and security-sensitive choices still require the same approval they required before.

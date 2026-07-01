@@ -5,6 +5,7 @@ How firstmate works, in depth.
 The [README](../README.md) carries the high-level diagram and a short synopsis.
 This document expands every part of it.
 firstmate's full operating manual for the orchestrator agent itself is [`AGENTS.md`](../AGENTS.md); this is the human-facing companion.
+See also: [configuration reference](configuration.md) and [script reference](scripts.md).
 
 ## Event-driven supervision
 

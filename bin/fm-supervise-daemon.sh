@@ -902,7 +902,12 @@ fm_super_main() {
   local WATCHER_PID="" CUR_TMP=""
   cleanup() {
     trap - TERM INT
-    escalate_flush "$STATE" 2>/dev/null || true
+    # In queue-consumer mode (always-on + opencode) the escalations buffer is
+    # kept empty by design — wakes stay in .wake-queue for fm-wake-drain.sh.
+    # Skip the flush to avoid a spurious inject_msg attempt on shutdown.
+    if [ "${FM_ALWAYS_ON:-0}" != "1" ] || [ "${_own_harness:-}" != "opencode" ]; then
+      escalate_flush "$STATE" 2>/dev/null || true
+    fi
     if [ -n "${WATCHER_PID:-}" ]; then
       kill "$WATCHER_PID" 2>/dev/null || true
       wait "$WATCHER_PID" 2>/dev/null || true

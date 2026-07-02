@@ -754,39 +754,61 @@ queue_consumer_loop() {  # <state>
   [ "$poll_secs" -gt 5 ] && poll_secs=5  # cap at 5s for responsiveness in always-on
 
   log "queue-consumer loop started (poll=${poll_secs}s)"
+  # On OpenCode the queue-consumer does NOT inject into a pane — the TUI has no
+  # tmux pane to receive a push notification. Instead it classifies wakes from the
+  # queue, records seen-status markers for deduplication, and leaves captain-relevant
+  # entries in the queue for fm-wake-drain.sh to surface at the start of the next
+  # firstmate turn. Only genuinely benign wakes (working: notes, bare turn-ends) are
+  # consumed silently; actionable wakes stay in the queue.
   while true; do
-    if ! tmux display-message -p -t "$TARGET" '#{pane_id}' >/dev/null 2>&1; then
-      sleep "$INJECT_FAIL_SLEEP"
-      continue
-    fi
-
-    # Drain the queue: read and clear atomically under the queue lock.
+    # Drain the queue under the queue lock.
     if fm_lock_try_acquire "$FM_WAKE_QUEUE_LOCK" 2>/dev/null; then
-      local tmp_drain
+      local tmp_drain keeper
       tmp_drain=$(mktemp "${TMPDIR:-/tmp}/fm-wake-drain.XXXXXX" 2>/dev/null) || {
         fm_lock_release "$FM_WAKE_QUEUE_LOCK" 2>/dev/null || true
         sleep "$poll_secs"; continue
       }
+      keeper=$(mktemp "${TMPDIR:-/tmp}/fm-wake-keep.XXXXXX" 2>/dev/null) || {
+        rm -f "$tmp_drain"; fm_lock_release "$FM_WAKE_QUEUE_LOCK" 2>/dev/null || true
+        sleep "$poll_secs"; continue
+      }
       if [ -s "$queue" ]; then
-        mv "$queue" "$tmp_drain" 2>/dev/null || true
+        cp "$queue" "$tmp_drain" 2>/dev/null || true
         : > "$queue" 2>/dev/null || true
       else
-        rm -f "$tmp_drain"; fm_lock_release "$FM_WAKE_QUEUE_LOCK" 2>/dev/null || true
+        rm -f "$tmp_drain" "$keeper"; fm_lock_release "$FM_WAKE_QUEUE_LOCK" 2>/dev/null || true
         sleep "$poll_secs"; continue
       fi
       fm_lock_release "$FM_WAKE_QUEUE_LOCK" 2>/dev/null || true
 
-      # Process each drained entry: classify and escalate captain-relevant ones.
-      while IFS=$'\t' read -r _ _ kind key payload || [ -n "$payload" ]; do
+      # Classify each entry. Captain-relevant wakes are written back to the queue
+      # (for fm-wake-drain.sh); benign wakes are consumed silently.
+      while IFS=$'\t' read -r epoch seq kind key payload || [ -n "$payload" ]; do
         [ -z "$kind" ] && continue
         reason="${kind}: ${payload}"
         log "queue-consumer: $reason"
+        # Use handle_wake for classification side-effects (seen-status markers,
+        # stale markers) but suppress inject_msg by routing escalations to the
+        # keeper file instead of the escalations buffer.
         handle_wake "$reason" "$state"
+        # If handle_wake added to escalations buffer, move it back to the queue
+        # and clear the buffer — injection is not our job on OpenCode.
+        if [ -s "$state/.subsuper-escalations" ]; then
+          # Re-queue the original entry so fm-wake-drain.sh surfaces it.
+          printf '%s\t%s\t%s\t%s\t%s\n' "$epoch" "$seq" "$kind" "$key" "$payload" >> "$keeper"
+          : > "$state/.subsuper-escalations"
+        fi
       done < "$tmp_drain"
       rm -f "$tmp_drain"
 
-      # Flush escalations immediately (always-on: no batching).
-      escalate_flush "$state" || true
+      # Write keeper entries back to the queue atomically.
+      if [ -s "$keeper" ]; then
+        fm_lock_try_acquire "$FM_WAKE_QUEUE_LOCK" 2>/dev/null && {
+          cat "$keeper" >> "$queue" 2>/dev/null || true
+          fm_lock_release "$FM_WAKE_QUEUE_LOCK" 2>/dev/null || true
+        }
+      fi
+      rm -f "$keeper"
       trim_log
     fi
 
@@ -901,8 +923,12 @@ fm_super_main() {
   # compete for that lock and almost always lose (1s tmux restart vs 15s backoff).
   # Instead, run a pure queue-consumer loop: drain state/.wake-queue directly,
   # classify entries, and inject captain-relevant wakes immediately.
+  # Detect own harness. When launched as a detached nohup process the parent
+  # chain no longer includes the harness binary, so fm-harness.sh would return
+  # unknown. FM_FIRSTMATE_HARNESS (set by fm-watch-arm.sh at launch) bypasses
+  # detection and provides the authoritative value.
   local _own_harness
-  _own_harness="$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || echo unknown)"
+  _own_harness="${FM_FIRSTMATE_HARNESS:-$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || echo unknown)}"
   if [ "${FM_ALWAYS_ON:-0}" = "1" ] && [ "$_own_harness" = "opencode" ]; then
     log "always-on + opencode: starting queue-consumer loop (no watcher child)"
     local INJECT_FAIL_SLEEP=${FM_INJECT_FAIL_SLEEP:-$INJECT_FAIL_SLEEP_DEFAULT}

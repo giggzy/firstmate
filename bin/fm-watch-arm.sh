@@ -99,7 +99,12 @@ costart_daemon_if_needed() {
   [ "${FM_ALWAYS_ON:-0}" = "1" ] || return 0
   local _dp="$STATE/.supervise-daemon.pid"
   if ! { [ -f "$_dp" ] && kill -0 "$(cat "$_dp" 2>/dev/null)" 2>/dev/null; }; then
-    FM_ALWAYS_ON=1 nohup "$SCRIPT_DIR/fm-supervise-daemon.sh" >/dev/null 2>&1 &
+    # Pass the detected harness explicitly so the daemon can route correctly
+    # even when launched as a detached nohup process (where process-ancestry
+    # detection would walk up to the shell, not the harness parent).
+    local _h
+    _h="$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || echo unknown)"
+    FM_ALWAYS_ON=1 FM_FIRSTMATE_HARNESS="$_h" nohup "$SCRIPT_DIR/fm-supervise-daemon.sh" >/dev/null 2>&1 &
   fi
 }
 

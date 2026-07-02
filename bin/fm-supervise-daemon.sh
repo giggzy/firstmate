@@ -718,7 +718,11 @@ handle_wake() {  # <reason> <state>
     # housekeeping re-escalates the same pane as a false wedge later.
     [ "$kind" = "stale" ] && stale_marker_remove "$arg" "$state"
     mark_escalated_seen "$kind" "$arg" "$state"
-    { [ "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" -le 0 ] || [ "${FM_ALWAYS_ON:-0}" = "1" ]; } && { escalate_flush "$state" || true; }
+    # In queue-consumer mode (always-on + opencode) injection is handled by
+    # re-queuing entries for fm-wake-drain.sh — skip the flush here entirely.
+    if [ "${FM_QUEUE_CONSUMER_MODE:-0}" != "1" ]; then
+      { [ "${FM_ESCALATE_BATCH_SECS:-$ESCALATE_BATCH_SECS_DEFAULT}" -le 0 ] || [ "${FM_ALWAYS_ON:-0}" = "1" ]; } && { escalate_flush "$state" || true; }
+    fi
   else
     # Transient (non-terminal) stale: record/refresh the marker so housekeeping
     # can age it; the persistence recheck, not this wake, escalates a wedge.
@@ -937,7 +941,7 @@ fm_super_main() {
   if [ "${FM_ALWAYS_ON:-0}" = "1" ] && [ "$_own_harness" = "opencode" ]; then
     log "always-on + opencode: starting queue-consumer loop (no watcher child)"
     local INJECT_FAIL_SLEEP=${FM_INJECT_FAIL_SLEEP:-$INJECT_FAIL_SLEEP_DEFAULT}
-    queue_consumer_loop "$STATE"
+    FM_QUEUE_CONSUMER_MODE=1 queue_consumer_loop "$STATE"
     exit 0
   fi
 

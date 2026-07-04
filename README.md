@@ -37,6 +37,8 @@ There is no app to install; the orchestrator is `AGENTS.md`, bundled firstmate s
 This is not an agent harness. This is not a single skill. This is not a CLI.
 This is.. a directory that turns any agent into your firstmate, and you the captain.
 
+This is a fork.
+
 ## Features
 
 - **One liaison** - you talk only to the first mate; it dispatches, supervises, escalates only real decisions, and reports plain outcomes.

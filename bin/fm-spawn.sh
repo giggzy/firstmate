@@ -333,7 +333,7 @@ launch_template() {
     # which fm-spawn writes the first time it launches a kiro crewmate (idempotent).
     # No turn-end hook: kiro V2 has no exposed per-turn shell hook; stale detection
     # in fm-watch.sh covers the idle-crewmate case (threshold: FM_STALE_ESCALATE_SECS).
-    kiro) printf '%s' '${KIRO_CA_BUNDLE:+SSL_CERT_FILE="$KIRO_CA_BUNDLE" }kiro-cli chat --trust-all-tools "$(cat __BRIEF__)"' ;;
+    kiro) printf '%s' '[ -n "$KIRO_CA_BUNDLE" ] && export SSL_CERT_FILE="$KIRO_CA_BUNDLE"; kiro-cli chat --trust-all-tools "$(cat __BRIEF__)"' ;;
     pi)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'pi __MODELFLAG____EFFORTFLAG__-e __PITURNEND__ -e __PIWATCH__ "$(cat __BRIEF__)"'

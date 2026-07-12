@@ -70,6 +70,8 @@ Do not substitute another harness's wait shape when resuming supervision.
 Claude and Grok use tracked background-notify cycles around `bin/fm-watch-arm.sh`.
 Codex uses bounded foreground checkpoints through `bin/fm-watch-checkpoint.sh` because Codex cannot reason while a foreground tool call is running.
 OpenCode uses `.opencode/plugins/fm-primary-watch-arm.js`, which coordinates with the turn-end guard plugin and wakes the TUI with `client.session.promptAsync`.
+
+The OpenCode plugin performs a guarded session-lock check before attempting an arm: it treats a missing, corrupt, or dead PID lock as safe to start a fresh watcher (it probes the recorded PID with a low-cost liveness check), and it only defers when a live external firstmate process truly owns the lock. When the arm child exits cleanly with no actionable watcher reason, the plugin clears its armed state and reports idle so subsequent re-arm attempts are allowed rather than suppressed.
 Pi uses the tracked `.pi/extensions/fm-primary-turnend-guard.ts` plus the tracked `.pi/extensions/fm-primary-pi-watch.ts`, both project-local extensions Pi auto-discovers once trusted.
 When changing any primary watcher adapter, update `docs/supervision-protocols/`, `docs/turnend-guard.md` if a shared idle or turn-end hook changed, and the relevant concise fact below.
 

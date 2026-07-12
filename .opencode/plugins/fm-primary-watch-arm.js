@@ -107,9 +107,15 @@ async function sessionOwnsLock(paths) {
   try {
     lockPid = readFileSync(`${paths.state}/.lock`, "utf8").trim();
   } catch {
-    return false;
+    return true;  // No lock file — no other session active, safe to arm
   }
-  if (!/^[0-9]+$/.test(lockPid) || lockPid === "1") return false;
+  if (!/^[0-9]+$/.test(lockPid) || lockPid === "1") return true;  // Stale/corrupt lock
+
+  // Check if the lock holder is alive
+  const alive = await runProcess("kill", ["-0", lockPid]);
+  if (alive.code !== 0) return true;  // Dead lock holder — safe to arm
+
+  // Lock holder is alive — check if it's in our ancestry
   let pid = String(process.pid);
   for (let i = 0; i < 8; i += 1) {
     if (pid === lockPid) return true;
@@ -187,7 +193,7 @@ function spawnArm(paths, sessionID, client) {
     child = null;
     const reason = firstWakeOrFailure(stdout, stderr, code);
     if (reason) setArmStatus(reason.startsWith("watcher: FAILED") ? "failed" : "wake");
-    else if (!readyStatus()) setArmStatus("idle");
+    else setArmStatus("idle");
     if (!reason) return;
     try {
       await sendPrompt(

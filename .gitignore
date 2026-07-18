@@ -19,3 +19,4 @@ config/wedge-alarm
 
 # Ignore local Claude config
 config/claude.local
+.claude/settings.local.json

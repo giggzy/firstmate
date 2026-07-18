@@ -1050,11 +1050,15 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
     echo "The report is the work product. Have the crewmate write it, or use --force after explicit discard approval." >&2
     exit 1
   fi
-  if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
-      FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-decision-hold.sh" verify "$ID" >/dev/null; then
-    echo "REFUSED: scout task $ID has not passed the unresolved-decision completion gate." >&2
-    echo "Inventory its report and any visual review through bin/fm-decision-hold.sh before teardown." >&2
-    exit 1
+  # Verify the unresolved-decision completion gate only when a compatible tasks-axi
+  # backend is available; otherwise allow scout teardown once the report exists.
+  if fm_tasks_axi_backend_available "$CONFIG"; then
+    if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+        FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-decision-hold.sh" verify "$ID" >/dev/null; then
+      echo "REFUSED: scout task $ID has not passed the unresolved-decision completion gate." >&2
+      echo "Inventory its report and any visual review through bin/fm-decision-hold.sh before teardown." >&2
+      exit 1
+    fi
   fi
 fi
 

@@ -296,7 +296,9 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         if [ "$n" -ge "$FM_WEDGE_DEMAND_INSPECT_COUNT" ]; then
           reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone)"
         fi
-        fm_wake_append stale "$win" "$reason" || exit 1
+        if ! fm_wake_append stale "$win" "$reason"; then
+          triage_log "warning: fm_wake_append failed for $win; skip wake but continue"
+        fi
         rm -f "$since_file"
         wake "$reason"
       fi
@@ -328,7 +330,9 @@ handle_paused_stale() {  # <window> <task> <hash>
   rf_age=$(age_of "$rf")   # 999999 when no prior re-surface
   if [ "$age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$rf_age" -ge "$PAUSE_RESURFACE_SECS" ]; then
     reason="stale: $win (paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)"
-    fm_wake_append stale "$win" "$reason" || exit 1
+    if ! fm_wake_append stale "$win" "$reason"; then
+      triage_log "warning: fm_wake_append failed for $win; skip wake but continue"
+    fi
     date +%s > "$rf"
     wake "$reason"
   fi
@@ -379,7 +383,9 @@ pause_state_class() {  # <window> <task>
 surface_nonterminal_stale() {  # <window> <hash>
   local win=$1 h=$2 key
   key=$(printf '%s' "$win" | tr ':/.' '___')
-  fm_wake_append stale "$win" "stale: $win" || exit 1
+  if ! fm_wake_append stale "$win" "stale: $win"; then
+    triage_log "warning: fm_wake_append failed for $win; skip wake but continue"
+  fi
   printf '%s' "$h" > "$STATE/.stale-$key"
   rm -f "$STATE/.stale-since-$key" "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
   wake "stale: $win"
@@ -767,14 +773,18 @@ while :; do
       fi
       if [ -n "$out" ]; then
         reason="check: $c: $out"
-        fm_wake_append check "$c" "$reason" || exit 1
+        if ! fm_wake_append check "$c" "$reason"; then
+          triage_log "warning: fm_wake_append failed for check $c; skip wake but continue"
+        fi
         touch "$STATE/.last-check"
         wake "$reason"
       fi
     done
     if [ -n "$rejected_checks" ]; then
       reason="check: rejected unauthenticated state checks:$rejected_checks"
-      fm_wake_append check unauthenticated-state-checks "$reason" || exit 1
+      if ! fm_wake_append check unauthenticated-state-checks "$reason"; then
+        triage_log "warning: fm_wake_append failed for unauthenticated-state-checks; skip wake but continue"
+      fi
       touch "$STATE/.last-check"
       wake "$reason"
     fi
@@ -815,7 +825,9 @@ EOF
     if afk_present || signal_reason_is_actionable $files || ! signal_crew_provably_working $files; then
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
-        fm_wake_append signal "$(basename "$f")" "$reason" || exit 1
+        if ! fm_wake_append signal "$(basename "$f")" "$reason"; then
+          triage_log "warning: fm_wake_append failed for signal $(basename \"$f\"); skip wake but continue"
+        fi
       done <<EOF
 $pending
 EOF
@@ -883,7 +895,9 @@ EOF
         elif afk_present; then
           # Daemon owns triage: one-shot per distinct stale hash, as before.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            fm_wake_append stale "$w" "stale: $w" || exit 1
+            if ! fm_wake_append stale "$w" "stale: $w"; then
+              triage_log "warning: fm_wake_append failed for $w; skip wake but continue"
+            fi
             printf '%s' "$h" > "$sf"
             wake "stale: $w"
           fi
@@ -908,7 +922,9 @@ EOF
               date +%s > "$ssf"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
             else
-              fm_wake_append stale "$w" "stale: $w" || exit 1
+              if ! fm_wake_append stale "$w" "stale: $w"; then
+                triage_log "warning: fm_wake_append failed for $w; skip wake but continue"
+              fi
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"
               mark_surfaced "$STATE/$(window_to_task "$w" "$STATE").status"
@@ -1009,14 +1025,18 @@ EOF
     # without exiting); the away-mode daemon, when present, owns triage and wants
     # every heartbeat.
     if afk_present; then
-      fm_wake_append heartbeat heartbeat heartbeat || exit 1
+      if ! fm_wake_append heartbeat heartbeat heartbeat; then
+        triage_log "warning: fm_wake_append failed for heartbeat; skip wake but continue"
+      fi
       touch "$STATE/.last-heartbeat"
       wake "heartbeat"
     elif heartbeat_scan_finds_actionable; then
       # Backstop: a captain-relevant status the per-wake path absorbed by mistake.
       # Enqueue first, then mark every captain-relevant status surfaced so the next
       # heartbeat does not re-fire them (enqueue-before-suppress preserved).
-      fm_wake_append heartbeat heartbeat heartbeat || exit 1
+      if ! fm_wake_append heartbeat heartbeat heartbeat; then
+        triage_log "warning: fm_wake_append failed for heartbeat; skip wake but continue"
+      fi
       touch "$STATE/.last-heartbeat"
       mark_all_captain_relevant_surfaced
       wake "heartbeat"

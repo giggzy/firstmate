@@ -642,12 +642,18 @@ handle_push_transition() {  # <backend> <session> <record>
   task=$(window_to_task "$window" "$STATE")
   if status_is_paused "$(last_status_line "$STATE/$task.status")"; then
     triage_log "absorbed push $to (declared pause, awaiting external): $window"
-    fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
+    if ! fm_backend_commit_transition "$backend" "$STATE" "$session" "$record"; then
+      triage_log "warning: fm_backend_commit_transition failed for $window (declared pause); continuing watcher"
+    fi
     return
   fi
   reason="stale: $window (herdr: agent $to - waiting on human, escalated immediately, not via wedge timer)"
-  fm_wake_append stale "$window" "$reason" || exit 1
-  fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
+  if ! fm_wake_append stale "$window" "$reason"; then
+    triage_log "warning: fm_wake_append failed for $window; skip wake but continue"
+  fi
+  if ! fm_backend_commit_transition "$backend" "$STATE" "$session" "$record"; then
+    triage_log "warning: fm_backend_commit_transition failed for $window; continuing watcher"
+  fi
   mark_surfaced "$STATE/$task.status"
   wake "$reason"
 }

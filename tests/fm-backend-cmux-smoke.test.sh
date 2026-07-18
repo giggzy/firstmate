@@ -33,7 +33,7 @@ fm_backend_cmux_version_check >/dev/null 2>&1 || { echo "skip: installed cmux is
 PING_STATE=$(fm_backend_cmux_ping_state)
 [ "$PING_STATE" = ok ] || { echo "skip: cmux socket not reachable/authenticated (state=$PING_STATE) - see docs/cmux-backend.md 'Setup'"; exit 0; }
 
-# shellcheck source=tests/cmux-test-safety.sh
+# shellcheck source=tests/cmux-test-safety.sh disable=SC1091
 . "$ROOT/tests/cmux-test-safety.sh"
 
 WS1=""

@@ -199,7 +199,7 @@ main() {
   # The mutating begin/check paths need locks and the keyed status fold.
   # `guard` returned above without sourcing fm-wake-lib.sh, whose initialization
   # creates the state directory, so the advertised read-only guard is literal.
-  # shellcheck source=bin/fm-wake-lib.sh
+  # shellcheck source=bin/fm-wake-lib.sh disable=SC1091
   . "$SCRIPT_DIR/fm-wake-lib.sh"
   # shellcheck source=bin/fm-classify-lib.sh
   . "$SCRIPT_DIR/fm-classify-lib.sh"

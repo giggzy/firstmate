@@ -34,11 +34,11 @@ CONTINUE_LINE=${FM_GUARD_CONTINUE_LINE:-This is a supervision warning only; the 
 # Cleared when the home leaves the unhealthy state so a later episode re-arms.
 STALE_BANNER_MARKER="$STATE/.guard-watcher-stale-banner"
 
-# shellcheck source=bin/fm-wake-lib.sh
+# shellcheck source=bin/fm-wake-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-wake-lib.sh"
-# shellcheck source=bin/fm-tangle-lib.sh
+# shellcheck source=bin/fm-tangle-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tangle-lib.sh"
-# shellcheck source=bin/fm-supervision-lib.sh
+# shellcheck source=bin/fm-supervision-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-supervision-lib.sh"
 
 # Deterministic episode key from beacon state: same continuous stale beacon

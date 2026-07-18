@@ -654,14 +654,15 @@ handle_push_transition() {  # <backend> <session> <record>
     return
   fi
   reason="stale: $window (herdr: agent $to - waiting on human, escalated immediately, not via wedge timer)"
-  if ! fm_wake_append stale "$window" "$reason"; then
-    triage_log "warning: fm_wake_append failed for $window; skip wake but continue"
+  if fm_wake_append stale "$window" "$reason"; then
+    if ! fm_backend_commit_transition "$backend" "$STATE" "$session" "$record"; then
+      triage_log "warning: fm_backend_commit_transition failed for $window; continuing watcher"
+    fi
+    mark_surfaced "$STATE/$task.status"
+    wake "$reason"
+  else
+    triage_log "warning: fm_wake_append failed for $window; skip wake and do NOT commit transition"
   fi
-  if ! fm_backend_commit_transition "$backend" "$STATE" "$session" "$record"; then
-    triage_log "warning: fm_backend_commit_transition failed for $window; continuing watcher"
-  fi
-  mark_surfaced "$STATE/$task.status"
-  wake "$reason"
 }
 
 # --- Main entry: the runtime below runs only when this file is executed as a

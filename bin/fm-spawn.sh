@@ -1004,10 +1004,25 @@ EOF
       # 2026-07-19 on 2.13.0), so stale detection covers idle crewmates.
       # Pre-write the trust-bypass setting so the "trust all tools mode" confirmation
       # dialog never blocks launch (its default cursor is "No, exit").
+      # ~/.kiro/settings/cli.json is a SHARED user settings file (it also carries
+      # keys like chat.hasSeenLogo and mcp.loadedBefore), so MERGE the one key in
+      # rather than overwriting the file and clobbering the captain's other
+      # settings. jq is already a firstmate dependency (used across bin/); if it is
+      # unavailable or the existing file is not valid JSON, fall back to writing the
+      # single key only when the file is absent, and otherwise leave an existing
+      # file untouched rather than risk destroying it.
       mkdir -p "$HOME/.kiro/settings"
       KIRO_CLI_JSON="$HOME/.kiro/settings/cli.json"
-      if [ ! -f "$KIRO_CLI_JSON" ] || ! grep -q "disableTrustAllConfirmation" "$KIRO_CLI_JSON" 2>/dev/null; then
+      if [ ! -f "$KIRO_CLI_JSON" ]; then
         printf '{"chat.disableTrustAllConfirmation": true}\n' > "$KIRO_CLI_JSON"
+      elif ! grep -q "disableTrustAllConfirmation" "$KIRO_CLI_JSON" 2>/dev/null; then
+        if command -v jq >/dev/null 2>&1 \
+          && kiro_cli_json_tmp=$(jq '. + {"chat.disableTrustAllConfirmation": true}' "$KIRO_CLI_JSON" 2>/dev/null) \
+          && [ -n "$kiro_cli_json_tmp" ]; then
+          printf '%s\n' "$kiro_cli_json_tmp" > "$KIRO_CLI_JSON"
+        else
+          echo "warning: could not merge chat.disableTrustAllConfirmation into $KIRO_CLI_JSON (jq missing or file not valid JSON); leaving it untouched. The first kiro-cli launch may show the trust-all-tools confirmation dialog." >&2
+        fi
       fi
       ;;
   esac

@@ -33,7 +33,7 @@
 #   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
-#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|grok)
+#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|grok|kiro-cli)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
 #   new adapters.
@@ -287,7 +287,7 @@ FIRSTMATE_HOME=
 
 if [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
-    ''|claude|codex|opencode|pi|grok)
+    ''|claude|codex|opencode|pi|grok|kiro-cli)
       ARG3=${POS[1]:-}
       ;;
     *' '*)
@@ -333,15 +333,28 @@ launch_template() {
       fi
       ;;
     opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}}'\'' opencode __MODELFLAG__--prompt "$(cat __BRIEF__)"' ;;
-    # kiro: set SSL_CERT_FILE from KIRO_CA_BUNDLE (set in ~/.zshrc for NYU VPN SSL
-    # inspection workaround; see ~/workspace/repos/docs/runbooks/ssl-corporate-proxy.md).
-    # On machines without the env var kiro-cli uses system CAs (works off-VPN).
-    # The trust confirmation dialog is suppressed via ~/.kiro/settings/cli.json:
-    #   {"chat.disableTrustAllConfirmation": true}
-    # which fm-spawn writes the first time it launches a kiro crewmate (idempotent).
-    # No turn-end hook: kiro V2 has no exposed per-turn shell hook; stale detection
-    # in fm-watch.sh covers the idle-crewmate case (threshold: FM_STALE_ESCALATE_SECS).
-    kiro) printf '%s' '[ -n "$KIRO_CA_BUNDLE" ] && export SSL_CERT_FILE="$KIRO_CA_BUNDLE"; kiro-cli chat --trust-all-tools "$(cat __BRIEF__)"' ;;
+    # kiro-cli (Amazon Q CLI rebrand; verified 2026-07-19, kiro-cli 2.13.0): a
+    # positional prompt starts the supervised interactive session.
+    # --trust-all-tools is the autonomy flag (verified fully unattended end to end:
+    # the crewmate runs shell commands and edits files with no permission gate); it
+    # is the equivalent of claude's --dangerously-skip-permissions. See the
+    # harness-adapters skill for the busy/idle signatures, exit command, and the
+    # turn-end mechanism finding.
+    # SSL_CERT_FILE is set from KIRO_CA_BUNDLE when present: kiro-cli's backend
+    # calls (runtime.us-east-1.kiro.dev) fail with a "dispatch failure (io error)"
+    # behind an SSL-inspecting proxy unless it trusts the corporate CA bundle
+    # (verified: without SSL_CERT_FILE the very first turn errors out; with it the
+    # turn completes). On a machine without KIRO_CA_BUNDLE kiro-cli uses system CAs.
+    # The first-run "trust all tools mode" confirmation dialog (which defaults its
+    # cursor to "No, exit", so a blind Enter would quit) is suppressed via
+    # ~/.kiro/settings/cli.json {"chat.disableTrustAllConfirmation": true}, written
+    # by fm-spawn below (idempotent). Verified: with that flag a fresh directory
+    # launches straight into the trusted session with no blocking dialog.
+    # No turn-end hook rides the launch command: kiro-cli's agent-config "stop" hook
+    # fires reliably only on the non-interactive/legacy path, not the default V3
+    # interactive TUI firstmate supervises, so firstmate relies on stale-pane/busy-
+    # signature polling for this harness (fm-watch.sh, threshold FM_STALE_ESCALATE_SECS).
+    kiro-cli) printf '%s' '[ -n "$KIRO_CA_BUNDLE" ] && export SSL_CERT_FILE="$KIRO_CA_BUNDLE"; kiro-cli chat __MODELFLAG____EFFORTFLAG__--trust-all-tools "$(cat __BRIEF__)"' ;;
     pi)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'pi __MODELFLAG____EFFORTFLAG__-e __PITURNEND__ -e __PIWATCH__ "$(cat __BRIEF__)"'
@@ -444,7 +457,7 @@ model_flag_for_harness() {
   local harness=$1 model=$2
   [ -n "$model" ] && [ "$model" != default ] || return 0
   case "$harness" in
-    claude|codex|opencode|pi|grok)
+    claude|codex|opencode|pi|grok|kiro-cli)
       printf -- '--model %s ' "$(shell_quote "$model")"
       ;;
   esac
@@ -481,6 +494,15 @@ effort_flag_for_harness() {
       # its --thinking flag.
       case "$effort" in
         low|medium|high|xhigh|max) printf -- '--thinking %s ' "$(shell_quote "$effort")" ;;
+      esac
+      ;;
+    kiro-cli)
+      # kiro-cli 2.13.0's `chat --effort` help advertises the full low|medium|high|
+      # xhigh|max range (verified: --effort xhigh completes a turn). It does NOT
+      # validate the value - an unknown effort is silently ignored, not rejected -
+      # so pass only the known-good vocabulary rather than any arbitrary string.
+      case "$effort" in
+        low|medium|high|xhigh|max) printf -- '--effort %s ' "$(shell_quote "$effort")" ;;
       esac
       ;;
     # opencode's interactive `opencode --prompt` launch has a verified --model
@@ -976,9 +998,12 @@ EOF
       printf 'token=%s\n' "${auth_file##*/}" > "$WT/.fm-grok-turnend"
       exclude_path '.fm-grok-turnend'
       ;;
-    kiro*)
-      # kiro V2: no per-turn shell hook exposed; stale detection covers idle crewmates.
-      # Pre-write the trust-bypass setting so the confirmation dialog never blocks launch.
+    kiro-cli*)
+      # kiro-cli: no per-turn shell hook rides the interactive launch (the agent-
+      # config "stop" hook fires only on the non-interactive/legacy path, verified
+      # 2026-07-19 on 2.13.0), so stale detection covers idle crewmates.
+      # Pre-write the trust-bypass setting so the "trust all tools mode" confirmation
+      # dialog never blocks launch (its default cursor is "No, exit").
       mkdir -p "$HOME/.kiro/settings"
       KIRO_CLI_JSON="$HOME/.kiro/settings/cli.json"
       if [ ! -f "$KIRO_CLI_JSON" ] || ! grep -q "disableTrustAllConfirmation" "$KIRO_CLI_JSON" 2>/dev/null; then

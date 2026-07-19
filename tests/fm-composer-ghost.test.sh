@@ -138,6 +138,18 @@ test_strip_ghost_drops_dark_truecolor_ghost() {
   pass "fm_tmux_strip_ghost drops a dark/muted truecolor foreground (grok placeholder)"
 }
 
+test_strip_ghost_drops_kiro_cli_placeholder() {
+  local out
+  # kiro-cli 2.13.0 renders its empty-composer placeholder "ask a question or
+  # describe a task" with a dark truecolor foreground (38;2;98;98;98, luminance
+  # ~98, below the default FM_COMPOSER_GHOST_LUMA_MAX of 128), captured live from
+  # an idle kiro-cli pane. The shared owner drops it so an idle kiro-cli composer
+  # never reads as pending, without needing a kiro-cli-specific carve-out.
+  out=$(printf '\033[38;2;98;98;98mask a question or describe a task\033[39m\n' | fm_tmux_strip_ghost)
+  [ -z "$out" ] || fail "kiro-cli dark-truecolor placeholder not dropped: '$out'"
+  pass "fm_tmux_strip_ghost drops kiro-cli's dark-truecolor idle placeholder"
+}
+
 # --- fm_pane_input_pending: dim ghost is not pending ------------------------
 
 test_dim_ghost_only_composer_is_not_pending() {
@@ -280,6 +292,7 @@ test_strip_ghost_drops_dim_keeps_normal
 test_strip_ghost_handles_combined_and_boundary_codes
 test_strip_ghost_keeps_colored_text_with_2_payloads
 test_strip_ghost_drops_dark_truecolor_ghost
+test_strip_ghost_drops_kiro_cli_placeholder
 test_dim_ghost_only_composer_is_not_pending
 test_dim_ghost_inside_bordered_composer_is_not_pending
 test_normal_text_still_pending

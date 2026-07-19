@@ -1,6 +1,6 @@
 ---
 name: harness-adapters
-description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, pi, and grok.
+description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, pi, grok, and kiro-cli.
 user-invocable: false
 metadata:
   internal: true
@@ -110,6 +110,7 @@ The supported launch-profile flags below are verified locally; each row records 
 | grok | `--model <model>` | `--reasoning-effort <low\|medium\|high>` | Verified on grok 0.2.99 (2026-07-13). `--effort` is an alias, but firstmate's profile axis is reasoning effort. As of 0.2.99 the ceiling is `high`; both `xhigh` and `max` are rejected with `use one of: high, medium, low`, so firstmate omits them. |
 | pi | `--model <model>` | `--thinking <low\|medium\|high\|xhigh\|max>` | Verified 2026-07-13 on Pi 0.80.6. `pi --help` advertises `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`; `pi --print --model openai-codex/gpt-5.6-sol --thinking max 'Reply with exactly OK.'` completed successfully. |
 | opencode | `--model <provider/model>` | none for firstmate's interactive launch | Verified on opencode 1.17.6. `opencode run` has `--variant`, but firstmate launches the interactive `opencode --prompt` path, which has no verified effort flag. |
+| kiro-cli | `--model <model>` | `--effort <low\|medium\|high\|xhigh\|max>` | Verified on kiro-cli 2.13.0 (2026-07-19). `chat --list-models` returns a real multi-model catalog (`auto` is default; `claude-opus-4.8`, `claude-sonnet-5`, `gpt-5.6-*`, `deepseek-3.2`, and more are selectable - `--model claude-haiku-4.5` completed a turn). `chat --effort` advertises the full low..max range and `--effort xhigh` completed a turn, but kiro-cli does NOT validate the value (an unknown effort is silently ignored, not rejected), so firstmate passes only the known-good vocabulary. |
 
 When a requested effort value is outside the harness-specific accepted set, `fm-spawn` records the requested `effort=` in meta but emits no effort flag for that harness.
 This preserves launch success instead of passing a known-bad value.
@@ -289,3 +290,50 @@ The adapter therefore runs the shared predicate and, when it returns 2, forces o
 It does not pass `--permission-mode`, so the passive hook cannot escalate the primary session's tool permissions.
 Project-local Grok hooks require folder trust, verified with launch-time `--trust`; if the primary firstmate checkout is not trusted for Grok hooks, this primary guard fails open and `fm-guard.sh` remains the next-command alarm.
 Grok's primary watcher protocol is Claude-shaped background-notify around `bin/fm-watch-arm.sh`; the passive Stop hook is only a backstop for blind turn ends.
+
+## kiro-cli (VERIFIED 2026-07-19, kiro-cli 2.13.0)
+
+kiro-cli is Amazon Q Developer CLI rebranded (`AWS_EXECUTION_ENV=AmazonQ-For-CLI Version/2.13.0`).
+The installed binary is `kiro-cli`, not `kiro`; `kiro` is not on PATH.
+Scope: verified as a CREWMATE/SCOUT dispatch target only, not as a primary-session harness.
+Launch with a positional prompt: `kiro-cli chat --trust-all-tools "$(cat <brief>)"`.
+
+| Fact | Value |
+|---|---|
+| Busy-pane signature | `Kiro is working` (the stable mid-turn footer `Kiro is working · Type to steer · Ctrl+S to queue`; the spinner line also carries `Thinking... (esc to cancel)`, but `Kiro is working` alone is the reliable busy match). |
+| Exit command | `/quit` (prints `Session ended.` and a `Resume with: kiro-cli --resume-id <session-id>` line, then returns to the shell). |
+| Interrupt | single `Escape` (cancels the current turn; the pane shows `● Cancelled streaming` and returns to idle). |
+| Autonomy | `--trust-all-tools` (`-a`); verified fully unattended end to end - a crewmate that ran shell commands and edited a file did so with no permission gate. The idle footer reads `Trust All Tools active, confirmations are off`. |
+| Env marker | `KIRO_SESSION_ID=<uuid>`, set for child/tool processes (also `AWS_EXECUTION_ENV=AmazonQ-For-CLI Version/...`). `KIRO_SESSION_ID` is the unambiguous marker `bin/fm-harness.sh` keys on. |
+| Resume | `kiro-cli --resume-id <session-id>` (id printed on `/quit`); `chat --resume` resumes the most recent conversation for the directory. |
+
+**SSL / corporate proxy (load-bearing here).**
+kiro-cli's backend requests (`runtime.us-east-1.kiro.dev`) fail with `dispatch failure (io error)` behind an SSL-inspecting proxy unless the process trusts the corporate CA bundle.
+Verified: launching from a directory without `SSL_CERT_FILE` set, the first turn errored with that dispatch failure; setting `SSL_CERT_FILE="$KIRO_CA_BUNDLE"` made the identical turn complete.
+The `fm-spawn` launch template sets `SSL_CERT_FILE` from `KIRO_CA_BUNDLE` when present; on a machine without `KIRO_CA_BUNDLE` kiro-cli falls back to system CAs.
+
+**Trust dialog (V3).**
+On first launch in a fresh, never-trusted directory, `--trust-all-tools` shows a blocking full-screen confirmation ("Warning: Kiro is running in trust all tools mode") with `No, exit` / `Yes, I accept` / `Yes, and don't ask again`.
+Its cursor defaults to `No, exit`, so a blind Enter would quit the session.
+firstmate suppresses it by pre-writing `~/.kiro/settings/cli.json` `{"chat.disableTrustAllConfirmation": true}` (idempotent, done in `fm-spawn`); verified that with that flag a fresh directory launches straight into the trusted session with no blocking dialog.
+Selecting `Yes, and don't ask again` at the dialog itself writes the same setting.
+
+**Idle composer.**
+The empty-composer placeholder `ask a question or describe a task ↵` is styled with a dark truecolor foreground (`38;2;98;98;98`, luminance ~98, below the default `FM_COMPOSER_GHOST_LUMA_MAX` of 128).
+The shared `fm_composer_strip_ghost` (`bin/fm-composer-lib.sh`) therefore already strips it to empty - the same dark-truecolor carve-out grok's placeholder uses - so kiro-cli needs NO new composer carve-out.
+Verified: the live captured styled placeholder row strips to an empty string.
+`bin/fm-tmux-lib.sh`'s busy default also matches the plain placeholder literal as a cheap theme-independent backstop for the post-Enter composer check.
+
+**Turn-end / wake signal (no reliable hook for firstmate's supervised path).**
+kiro-cli's agent-config supports a `hooks` object; `stop` and `postToolUse` triggers validate and, on the NON-interactive/legacy path, a `stop` hook fires reliably at turn end (verified: a `stop` hook `touch`ed a marker file, and the pane showed `✓ 1 of 1 hooks finished`).
+However, the default V3 interactive TUI that firstmate's supervised spawn uses does NOT discover the same local `.kiro/agents/` config (it reports `agent "fmhook" not found, using "default"`), and the `stop` hook did not fire in that interactive session; `--legacy-ui` is rejected in this environment (`cannot be used with '--v3'`).
+So there is no reliable per-turn hook for the interactive supervised launch: firstmate relies on stale-pane/busy-signature polling for this harness (the same tier as opencode's headless fail-open note, or grok before its Stop hook was found).
+The `stop`/`postToolUse` hook triggers are a real mechanism and are a flag for a future task if a robust interactive turn-end signal is ever needed, but nothing dependable exists today, so no hook is wired.
+
+**Model / effort.**
+See the [launch-profile-axes table](#launch-profile-axes): a real multi-model catalog is selectable and the full effort range is accepted (but not validated, so firstmate passes only known-good effort values).
+
+**Primary-session scope (not done).**
+kiro-cli is verified only as a crewmate/scout dispatch target.
+Wiring it as a primary-session harness would additionally need a session-start nudge adapter, a turn-end guard, a PreToolUse watcher-arm seatbelt, and a watcher supervision protocol under `docs/supervision-protocols/` - none of which are done or verified.
+Its `stop`/`postToolUse` hook system may be capable of the guard pieces on the non-interactive path, but that is unverified for the interactive primary and is left for a future task.

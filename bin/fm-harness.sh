@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Detect the agent harness this process tree runs on.
-# Usage: fm-harness.sh                  print own harness: claude|codex|opencode|pi|grok|unknown
+# Usage: fm-harness.sh                  print own harness: claude|codex|opencode|pi|grok|kiro-cli|unknown
 #        fm-harness.sh crew             print the effective CREWMATE harness
 #                                        (config/crew-harness; "default" resolves to own)
 #        fm-harness.sh secondmate       print the harness the PRIMARY uses to launch
@@ -35,7 +35,11 @@ detect_own() {
   # It does NOT set CLAUDECODE despite being Claude-Code-compatible, so this marker
   # is unambiguous when firstmate runs natively on grok.
   [ "${GROK_AGENT:-}" = "1" ] && { echo grok; return; }
-  [ -n "${KIRO_SESSION_ID:-}" ] && { echo kiro; return; }
+  # kiro-cli (Amazon Q CLI rebrand) sets KIRO_SESSION_ID=<uuid> for its child/tool
+  # processes (verified 2026-07-19, kiro-cli 2.13.0: a shell tool it ran reported
+  # KIRO_SESSION_ID plus AWS_EXECUTION_ENV=AmazonQ-For-CLI). KIRO_SESSION_ID is the
+  # unambiguous marker; the adapter name is kiro-cli, matching the launch template.
+  [ -n "${KIRO_SESSION_ID:-}" ] && { echo kiro-cli; return; }
   # Layer 2: walk the parent chain and match the command name.
   local pid=$$ comm args
   for _ in 1 2 3 4 5 6 7 8; do
@@ -45,7 +49,7 @@ detect_own() {
       *codex*) echo codex; return ;;
       *opencode*) echo opencode; return ;;
       *grok*) echo grok; return ;;
-      *kiro*) echo kiro; return ;;
+      *kiro*) echo kiro-cli; return ;;
       pi) echo pi; return ;;
       node*|python*)
         # Bare interpreter: match the harness name in its script path.
@@ -55,7 +59,7 @@ detect_own() {
           *codex*) echo codex; return ;;
           *opencode*) echo opencode; return ;;
           *grok*) echo grok; return ;;
-          *kiro*) echo kiro; return ;;
+          *kiro*) echo kiro-cli; return ;;
           *" pi "*|*/pi) echo pi; return ;;
         esac ;;
     esac

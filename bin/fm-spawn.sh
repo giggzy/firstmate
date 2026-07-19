@@ -1011,7 +1011,7 @@ EOF
       # unavailable or the existing file is not valid JSON, fall back to writing the
       # single key only when the file is absent, and otherwise leave an existing
       # file untouched rather than risk destroying it.
-      mkdir -p "$HOME/.kiro/settings"
+      mkdir -p "$HOME/.kiro/settings" && chmod 700 "$HOME/.kiro/settings"
       KIRO_CLI_JSON="$HOME/.kiro/settings/cli.json"
       if [ ! -f "$KIRO_CLI_JSON" ]; then
         old_umask=$(umask)

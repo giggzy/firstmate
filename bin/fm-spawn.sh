@@ -1014,12 +1014,24 @@ EOF
       mkdir -p "$HOME/.kiro/settings"
       KIRO_CLI_JSON="$HOME/.kiro/settings/cli.json"
       if [ ! -f "$KIRO_CLI_JSON" ]; then
-        printf '{"chat.disableTrustAllConfirmation": true}\n' > "$KIRO_CLI_JSON"
+        old_umask=$(umask)
+        umask 077
+        tmp=$(mktemp "$HOME/.kiro/settings/cli.json.XXXXXXXX")
+        umask "$old_umask"
+        printf '{"chat.disableTrustAllConfirmation": true}\n' > "$tmp"
+        mv "$tmp" "$KIRO_CLI_JSON"
       elif ! grep -q "disableTrustAllConfirmation" "$KIRO_CLI_JSON" 2>/dev/null; then
-        if command -v jq >/dev/null 2>&1 \
-          && kiro_cli_json_tmp=$(jq '. + {"chat.disableTrustAllConfirmation": true}' "$KIRO_CLI_JSON" 2>/dev/null) \
-          && [ -n "$kiro_cli_json_tmp" ]; then
-          printf '%s\n' "$kiro_cli_json_tmp" > "$KIRO_CLI_JSON"
+        if command -v jq >/dev/null 2>&1; then
+          old_umask=$(umask)
+          umask 077
+          tmp=$(mktemp "$HOME/.kiro/settings/cli.json.XXXXXXXX")
+          umask "$old_umask"
+          if jq '. + {"chat.disableTrustAllConfirmation": true}' "$KIRO_CLI_JSON" > "$tmp" 2>/dev/null; then
+            mv "$tmp" "$KIRO_CLI_JSON"
+          else
+            rm -f "$tmp" 2>/dev/null || true
+            echo "warning: could not merge chat.disableTrustAllConfirmation into $KIRO_CLI_JSON (jq missing or file not valid JSON); leaving it untouched. The first kiro-cli launch may show the trust-all-tools confirmation dialog." >&2
+          fi
         else
           echo "warning: could not merge chat.disableTrustAllConfirmation into $KIRO_CLI_JSON (jq missing or file not valid JSON); leaving it untouched. The first kiro-cli launch may show the trust-all-tools confirmation dialog." >&2
         fi

@@ -107,15 +107,11 @@ async function sessionOwnsLock(paths) {
   try {
     lockPid = readFileSync(`${paths.state}/.lock`, "utf8").trim();
   } catch {
-    return true;  // No lock file — no other session active, safe to arm
+    return false;  // No lock file — cannot prove ownership, refuse to arm
   }
-  if (!/^[0-9]+$/.test(lockPid) || lockPid === "1") return true;  // Stale/corrupt lock
+  if (!/^[0-9]+$/.test(lockPid) || lockPid === "1") return false;  // Stale/corrupt lock — refuse to arm
 
-  // Check if the lock holder is alive
-  const alive = await runProcess("kill", ["-0", lockPid]);
-  if (alive.code !== 0) return true;  // Dead lock holder — safe to arm
-
-  // Lock holder is alive — check if it's in our ancestry
+  // Walk this process's ancestry looking for the lock holder's pid.
   let pid = String(process.pid);
   for (let i = 0; i < 8; i += 1) {
     if (pid === lockPid) return true;

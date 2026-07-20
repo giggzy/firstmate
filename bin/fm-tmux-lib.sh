@@ -49,14 +49,19 @@
 # Busy footers per harness (mirror fm-watch.sh). claude/codex: "esc to
 # interrupt"; opencode: "esc interrupt"; pi: "Working..."; grok: "Ctrl+c:cancel"
 # (grok's mid-turn cancel hint, shown iff a turn is running - verified grok 0.2.73);
-# kiro: "Kiro is working".
-# Also include kiro's idle input placeholder ("ask a question or describe a task"):
-# it appears on the cursor/composer line when kiro is idle and needs to be treated as
+# kiro-cli: "Kiro is working" (the stable mid-turn footer "Kiro is working · Type
+# to steer · Ctrl+S to queue"; the spinner line also carries "(esc to cancel)" -
+# verified kiro-cli 2.13.0, but "Kiro is working" alone is the reliable busy match).
+# Also include kiro-cli's idle input placeholder ("ask a question or describe a task"):
+# it appears on the cursor/composer line when kiro-cli is idle and needs to be treated as
 # "empty" (not pending input) so fm-send's post-Enter composer check does not false-alarm
-# on a fast kiro turn where the placeholder reappears before the 0.4s sleep expires.
+# on a fast kiro-cli turn where the placeholder reappears before the 0.4s sleep expires.
+# (The styled placeholder is dark-truecolor and so already strips to empty via
+# fm_composer_strip_ghost - verified 2026-07-19 - but this literal match is a cheap
+# theme-independent backstop for the plain post-Enter check.)
 # This entry is intentionally NOT in fm-watch.sh's BUSY_REGEX: the watcher checks the
 # tail-6 lines of the whole pane for stale detection and the placeholder appearing there
-# means kiro is idle/stale (correct), not busy.
+# means kiro-cli is idle/stale (correct), not busy.
 FM_TMUX_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working\.\.\.|Ctrl\+c:cancel|Kiro is working|ask a question or describe a task'
 
 # fm_tmux_strip_ghost: thin adapter over the shared, fleet-wide ghost extractor

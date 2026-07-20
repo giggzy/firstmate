@@ -115,7 +115,7 @@ SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trai
 # grok: "Ctrl+c:cancel" (the mid-turn cancel hint in grok's keybind bar, shown iff a
 # turn is running; absent when idle - verified grok 0.2.73, ASCII to avoid the
 # locale fragility of matching grok's braille spinner glyph directly).
-# kiro: "Kiro is working".
+# kiro-cli: "Kiro is working" (the stable mid-turn footer - verified kiro-cli 2.13.0).
 BUSY_REGEX=${FM_BUSY_REGEX:-'esc (to )?interrupt|Working\.\.\.|Ctrl\+c:cancel|Kiro is working'}
 # Always-on wake triage: most wakes during a long crew validation are benign (a
 # working: note or turn-end while a pipeline runs, a no-change heartbeat). Rather

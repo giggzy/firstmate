@@ -28,8 +28,7 @@
       "Bash(treehouse status*)",
       "Bash(bin/fm-crew-state.sh*)",
       "Bash(herdr pane read *)",
-      "Bash(no-mistakes doctor*)",
-      "Bash(bin/fm-dispatch-select.sh*)"
+      "Bash(no-mistakes doctor*)"
     ]
   },
   "hooks": {

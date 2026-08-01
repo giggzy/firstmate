@@ -1,4 +1,30 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(npm test *)",
+      "Bash(no-mistakes axi logs *)",
+      "Bash(aws codepipeline get-pipeline-state *)",
+      "Bash(no-mistakes axi status *)",
+      "Bash(gh-axi issue view *)",
+      "Bash(npm run lint *)",
+      "Bash(aws cloudformation describe-stack-events *)",
+      "Bash(aws cloudformation describe-stacks *)",
+      "Bash(aws rds describe-db-instances *)",
+      "Bash(aws cloudformation describe-stack-resources *)",
+      "Bash(gh-axi pr list *)",
+      "Bash(aws codepipeline list-action-executions *)",
+      "Bash(gh-axi issue list *)",
+      "Bash(kubectl get *)",
+      "Bash(aws cloudformation describe-change-set *)",
+      "Bash(aws codepipeline get-pipeline-execution *)",
+      "Bash(no-mistakes runs *)",
+      "Bash(npm run typecheck *)",
+      "Bash(tasks-axi show *)",
+      "Bash(tasks-axi list *)",
+      "Bash(bin/fm-watch-arm.sh*)",
+      "Bash(bin/fm-wake-drain.sh*)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {

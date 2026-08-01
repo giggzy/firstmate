@@ -794,11 +794,15 @@ while :; do
               triage_log "merged PR poll retirement deferred because its canonical snapshot changed for $id"
             fi
           fi
+          touch "$STATE/.last-check"
+          wake "$reason"
         else
+          if [ "$is_pr_poll" -eq 1 ] && [ "$out" = merged ]; then
+            triage_log "ERROR: queue publication failed for merged PR poll $id"
+            exit 1
+          fi
           triage_log "warning: fm_wake_append failed for check $c; skip wake but continue"
         fi
-        touch "$STATE/.last-check"
-        wake "$reason"
       fi
     done
     if [ -n "$rejected_checks" ]; then

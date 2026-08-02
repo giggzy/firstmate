@@ -5,6 +5,7 @@
       "Bash(bin/fm-brief.sh*)",
       "Bash(bin/fm-spawn.sh*)",
       "Bash(bin/fm-send.sh*)",
+      "Bash(FM_HOME=/Users/farreg03/firstmate bin/fm-send.sh*)",
       "Bash(no-mistakes axi logs *)",
       "Bash(aws codepipeline get-pipeline-state *)",
       "Bash(no-mistakes axi status *)",
@@ -55,12 +56,15 @@
       "Bash(aws lambda list-functions *)",
       "Bash(chrome-devtools-axi network*)",
       "Bash(chrome-devtools-axi console*)",
-      "Bash(bin/fm-*.sh*)"
+      "Bash(bin/fm-*.sh*)",
+      "Bash(tasks-axi *)"
     ],
     "ask": [
       "Bash(bin/fm-pr-merge.sh*)",
       "Bash(bin/fm-merge-local.sh*)",
-      "Bash(bin/fm-teardown.sh*)"
+      "Bash(bin/fm-teardown.sh*)",
+      "Bash(tasks-axi rm*)",
+      "Bash(tasks-axi prune*)"
     ]
   },
   "hooks": {

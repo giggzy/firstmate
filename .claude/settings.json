@@ -54,7 +54,13 @@
       "Bash(herdr status*)",
       "Bash(aws lambda list-functions *)",
       "Bash(chrome-devtools-axi network*)",
-      "Bash(chrome-devtools-axi console*)"
+      "Bash(chrome-devtools-axi console*)",
+      "Bash(bin/fm-*.sh*)"
+    ],
+    "ask": [
+      "Bash(bin/fm-pr-merge.sh*)",
+      "Bash(bin/fm-merge-local.sh*)",
+      "Bash(bin/fm-teardown.sh*)"
     ]
   },
   "hooks": {

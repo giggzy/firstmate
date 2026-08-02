@@ -26,7 +26,7 @@ Both are free macOS menu bar apps that run a folder of scripts on a timer and re
 - **Menu bar line**: `Q C:<claude%> O:<codex%>`, color-coded green/orange/red by whichever of Claude or Codex is lower.
 - **Dropdown**: per-window detail for Claude (session + weekly) and OpenAI/Codex (weekly), each with its reset time.
 - **GitHub Copilot**: shown in the dropdown but explicitly labeled "unverified" and always gray, never factored into the menu bar color or summary. `quota-axi` itself declines to compute an effective remaining percentage for Copilot — every window it reports came back with an epoch (`1970-01-01`) reset timestamp, which looks like missing data from GitHub's endpoint rather than a real "never resets" value. Don't trust these numbers without checking GitHub's own billing page.
-- **Kiro**: intentionally omitted. As of this writing, `quota-axi` has no `kiro` provider and `kiro-cli` has no usage/quota/billing subcommand — only a `dashboard` command that opens a web page. There's no local API or file to read from, so the plugin just prints a one-line note pointing at the Kiro web dashboard instead of scraping anything. See `data/quota-consolidation-scout-g1/report.md` for how that was verified.
+- **Kiro**: intentionally omitted. As of this writing, `quota-axi` has no `kiro` provider and `kiro-cli` has no usage/quota/billing subcommand — only a `dashboard` command that opens a web page. There's no local API or file to read from, so the plugin just prints a one-line note pointing at the Kiro web dashboard instead of scraping anything.
 - **Refresh**: a manual "Refresh" item using SwiftBar's native `refresh=true` action.
 
 ## If something looks wrong

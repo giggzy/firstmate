@@ -14,8 +14,7 @@
 # and jq on PATH.
 #
 # Kiro is intentionally not shown: quota-axi has no "kiro" provider and
-# kiro-cli exposes no usage/quota subcommand, only a web dashboard. See
-# data/quota-consolidation-scout-g1/report.md for how that was verified.
+# kiro-cli exposes no usage/quota subcommand, only a web dashboard.
 # Do not add a Kiro scraper here without a real local API/CLI surface to
 # read from - there wasn't one as of this writing.
 #

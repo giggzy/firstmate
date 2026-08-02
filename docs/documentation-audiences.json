@@ -338,6 +338,10 @@
     {
       "path": "skills/stow/SKILL.md",
       "audience": "public-product"
+    },
+    {
+      "path": "tools/quota-menubar/README.md",
+      "audience": "operator-current"
     }
   ]
 }

@@ -2,6 +2,7 @@
   "permissions": {
     "allow": [
       "Bash(npm test *)",
+      "Bash(bin/fm-brief.sh*)",
       "Bash(no-mistakes axi logs *)",
       "Bash(aws codepipeline get-pipeline-state *)",
       "Bash(no-mistakes axi status *)",

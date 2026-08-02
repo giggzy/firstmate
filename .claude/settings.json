@@ -3,6 +3,7 @@
     "allow": [
       "Bash(npm test *)",
       "Bash(bin/fm-brief.sh*)",
+      "Bash(bin/fm-spawn.sh*)",
       "Bash(no-mistakes axi logs *)",
       "Bash(aws codepipeline get-pipeline-state *)",
       "Bash(no-mistakes axi status *)",

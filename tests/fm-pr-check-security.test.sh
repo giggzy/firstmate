@@ -92,6 +92,12 @@ SH
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_TEST_GH_AXI_LOG"
+case "${1:-} ${2:-}" in
+  "pr view")
+    [ "$#" -eq 5 ] && [ "${4:-}" = --repo ] || exit 2
+    printf 'pull_request:\n  number: %s\n  state: %s\n' "$3" "${FM_TEST_GH_MERGE_STATE:-merged}"
+    ;;
+esac
 exit "${FM_TEST_GH_AXI_RC:-0}"
 SH
   # Plain glab, reproducing the real CLI's contract: its field output on stdout
@@ -567,12 +573,23 @@ test_valid_recording_and_merge_derivation() {
     >/dev/null 2>/dev/null || fail "valid merge wrapper failed"
   grep -qxF 'pr merge 37 --repo my-org/repo_name.with-dots --merge' "$dir/gh-axi.log" \
     || fail "merge wrapper did not preserve repository derivation and method"
+  # A merge this home performed leaves its own durable outcome, so the poll's
+  # confirmation is no longer the first the captain hears of it. Acknowledge that
+  # record before the watcher cycle below, which is what still retires the poll.
+  assert_grep 'https://github.com/my-org/repo_name.with-dots/pull/37' "$dir/home/state/.wake-queue" \
+    "a merge this home performed left no durable outcome"
+  ack_watcher_cycle "$dir/home/state" || fail "merge outcome acknowledgement failed"
+  # With the merge already reported, the poll's own detection is a duplicate the
+  # watcher absorbs, so this cycle needs its own reason to end.
+  add_stop_custom_check "$dir"
   set +e
   FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/merged-watch.out" 2> "$dir/merged-watch.err"
   rc=$?
   set -e
   [ "$rc" -eq 0 ] || fail "guarded merge poll retirement failed: $(cat "$dir/merged-watch.err")"
   assert_poll_absent "$dir/home/state" task-a
+  assert_no_grep "merged-task-a" "$dir/home/state/.wake-queue" \
+    "the drained self-merge outcome was republished by its poll"
   grep -qxF 'pr=https://github.com/my-org/repo_name.with-dots/pull/37' "$dir/home/state/task-a.meta" \
     || fail "guarded merge retirement removed pr metadata"
   grep -qxF "pr_head=$expected" "$dir/home/state/task-a.meta" \
@@ -3141,10 +3158,12 @@ test_retirement_crash_recovery() {
   set -e
   [ "$rc" -eq 0 ] || fail "post-queue retry watcher failed: $(cat "$dir/watch.err")"
   assert_poll_absent "$state" task-a
-  raw_count=$(grep -c $'\tcheck\t.*task-a.check.sh\t' "$state/.wake-queue")
+  raw_count=$(grep -cF "$(printf '\tcheck\tmerged-task-a-https://github.com/o/r/pull/3\t')" \
+    "$state/.wake-queue" || true)
   [ "$raw_count" -eq 1 ] || fail "post-queue retry did not publish exactly one new terminal row"
   FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-wake-drain.sh" > "$dir/drain.out" 2>/dev/null
-  drain_count=$(grep -c $'\tcheck\t.*task-a.check.sh\t' "$dir/drain.out")
+  drain_count=$(grep -cF "$(printf '\tcheck\tmerged-task-a-https://github.com/o/r/pull/3\t')" \
+    "$dir/drain.out" || true)
   [ "$drain_count" -eq 1 ] || fail "same-key crash retry rows did not deduplicate at drain"
 
   dir=$(make_case retirement-after-receipt)

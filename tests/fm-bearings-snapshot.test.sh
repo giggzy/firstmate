@@ -186,6 +186,90 @@ run() {  # <home> <fakebin> <args...>
   PATH="$fakebin:$PATH" FM_HOME="$home" FM_BEARINGS_NOW=2026-07-11T18:00:00Z NET_LOG="$home/net.log" "$BEARINGS" "$@"
 }
 
+write_remote_home_summary() {  # <remote-home> <generated-epoch>
+  local home=$1 epoch=$2
+  mkdir -p "$home/state"
+  jq -n --arg home "$home" --argjson epoch "$epoch" '{
+    schema:"fm-secondmate-home-summary.v1",
+    generated:"2026-09-01T22:00:00Z",generated_epoch:$epoch,home:$home,
+    valid:true,reason:null,invalidity:{kind:null,ids:[]},state:"no_active_work",
+    active_children:[],decisions_open:[],holds:[],queued:[],landed:[],endpoints:[],
+    counts:{active_children:0,decisions_open:0,holds:0,queued:0,landed:0,endpoints:0},omitted:[]
+  }' > "$home/state/home-summary.json"
+}
+
+make_remote_ledger_fleet() {  # <parent-home> <count>
+  local parent=$1 count=$2 i id remote_home
+  mkdir -p "$parent/data" "$parent/state" "$parent/config" "$parent/projects"
+  : > "$parent/data/backlog.md"
+  : > "$parent/data/secondmates.md"
+  i=1
+  while [ "$i" -le "$count" ]; do
+    id="ledger-$i"
+    remote_home="$TMP_ROOT/remote-ledger-home-$i"
+    mkdir -p "$remote_home/state"
+    remote_home=$(cd "$remote_home" && pwd -P)
+    printf -- '- %s - ledger fixture (host: host-%s; root: /remote/root; home: %s; scope: fixture; projects: sample; added 2026-09-01)\n' \
+      "$id" "$i" "$remote_home" >> "$parent/data/secondmates.md"
+    fm_write_meta "$parent/state/$id.meta" \
+      "kind=secondmate" "mode=secondmate" "harness=pi" \
+      "remote_host=host-$i" "remote_root=/remote/root" "home=$remote_home"
+    write_remote_home_summary "$remote_home" 1000
+    i=$((i + 1))
+  done
+}
+
+make_remote_ledger_ssh() {  # <dir>
+  local dir=$1 fb="$1/fakebin"
+  mkdir -p "$fb"
+  cat > "$fb/fake-ssh" <<'SH'
+#!/usr/bin/env bash
+set -u
+while [ "$#" -gt 0 ]; do
+  case "$1" in -o) shift 2 ;; --) shift; break ;; *) exit 90 ;; esac
+done
+shift 2
+remote_home=$(perl -MMIME::Base64=decode_base64 -e 'print decode_base64($ARGV[0])' "$3")
+args=()
+while IFS= read -r -d '' arg; do args+=("$arg"); done \
+  < <(perl -MMIME::Base64=decode_base64 -e 'print decode_base64($ARGV[0])' "$4")
+printf '%s\t%s\n' "$remote_home" "${args[0]:-}" >> "$FM_TEST_LEDGER_CALL_LOG"
+if [ -f "$remote_home/state/slow-ledger-read" ]; then
+  sleep 30 &
+  sleeper=$!
+  printf '%s %s\n' "$$" "$sleeper" >> "$FM_TEST_LEDGER_PID_LOG"
+  wait "$sleeper"
+fi
+case "${args[0]:-}" in
+  fm-remote-file.sh)
+    [ -f "$remote_home/state/home-summary.json" ] || exit 1
+    if [ -f "$remote_home/state/unbounded-ledger-read" ]; then
+      yes x
+    else
+      cat "$remote_home/state/home-summary.json"
+    fi
+    ;;
+  fm-fleet-snapshot.sh)
+    [ -f "$remote_home/state/fallback-summary.json" ] || exit 1
+    cat "$remote_home/state/fallback-summary.json"
+    ;;
+  *) exit 91 ;;
+esac
+SH
+  chmod +x "$fb/fake-ssh"
+  printf '%s\n' "$fb"
+}
+
+run_remote_ledger_bearings() {  # <parent-home> <fakebin> <epoch>
+  local parent=$1 fakebin=$2 epoch=$3
+  FM_HOME="$parent" FM_ROOT_OVERRIDE="$ROOT" FM_SSH_BIN="$fakebin/fake-ssh" \
+    FM_TEST_LEDGER_CALL_LOG="$parent/ledger-calls.log" \
+    FM_TEST_LEDGER_PID_LOG="$parent/ledger-pids.log" \
+    FM_SNAPSHOT_CACHE_DIR="$parent/state/summary-cache" \
+    FM_SNAPSHOT_BUDGET=3 FM_SNAPSHOT_NOW_EPOCH="$epoch" \
+    FM_BEARINGS_NOW=2026-09-01T22:00:00Z "$BEARINGS" --json
+}
+
 # End-to-end Domain Alpha regression fixture.
 # The parent event claims Phase 7 started, while the registered home has no child
 # metadata, every sample-rollout item is Done, and only an external legal hold remains.
@@ -499,7 +583,7 @@ test_bad_secondmate_homes_never_revive_parent_work() {
 }
 
 test_oversized_secondmate_summary_stays_strict_unknown() {
-  local home mate fakebin json i
+  local home mate fakebin json legacy i
   home=$(make_home oversized-home)
   mate="$TMP_ROOT/oversized-secondmate-home"
   make_valid_secondmate_home oversized "$mate"
@@ -529,7 +613,14 @@ EOF
       and (.decisions_open | any(.owner == "oversized") | not)
       and (.landed | any(.owner == "oversized") | not)
   ' >/dev/null || fail "oversized summary revived or retained unvalidated surfaces: $json"
-  pass "an oversized secondmate summary retains the strict empty unknown fallback"
+  legacy=$(FM_SNAPSHOT_LEDGER_MODE=off FM_SNAPSHOT_SECONDMATE_MAX_BYTES=512 run "$home" "$fakebin" --json)
+  printf '%s' "$legacy" | jq -e '
+    (.secondmates | any(.id == "oversized" and .state == "unknown"
+      and (.reason | contains("exceeded byte limit"))))
+      and (.in_flight | any(.id == "oversized") | not)
+      and (.landed | any(.owner == "oversized") | not)
+  ' >/dev/null || fail "legacy mode accepted an oversized structured summary: $legacy"
+  pass "oversized summaries stay strict unknown in ledger and compatibility modes"
 }
 
 test_secondmate_and_child_bounds_are_disclosed() {
@@ -1062,7 +1153,11 @@ test_perl_fallback_bounds_github_call() {
   fakebin=$(make_fakebin "$home")
   toolbin="$home/toolbin"
   mkdir -p "$toolbin"
-  for cmd in bash dirname basename jq date sed git grep tail cut tr head sort wc perl sleep cat find; do
+  for cmd in bash dirname basename jq date sed git grep tail cut tr head sort wc perl sleep cat find mktemp rm mkdir chmod mv cp awk; do
+    ln -s "$(command -v "$cmd")" "$toolbin/$cmd"
+  done
+  for cmd in shasum sha256sum; do
+    command -v "$cmd" >/dev/null 2>&1 || continue
     ln -s "$(command -v "$cmd")" "$toolbin/$cmd"
   done
   started=$(date +%s)

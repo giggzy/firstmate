@@ -143,8 +143,18 @@
 #     conclude_task_no_mistakes_run attributes the active-or-most-recent run to
 #     THIS task only when its branch AND code identity (bin/fm-nm-run-lib.sh's
 #     strict fm_nm_head_matches_worktree rule) both match this worktree, then
-#     runs `no-mistakes axi abort --run <id>` for
-#     that verified run instance. A run already terminal
+#     runs `no-mistakes axi abort --run <id>` for that verified run instance.
+#     When the run head is absent from this copy's object store - the pipeline
+#     committed its fix round in its own repo and the task copy never fetched
+#     it - attribution falls to the same lib's shared
+#     fm_nm_runs_status_for_worktree ledger rule, whose anchored continuation
+#     recognition is the only remaining path, which refuses every row shape
+#     it cannot prove, and which authorizes the abort only for an explicitly
+#     active (`running`) proved continuation - a terminal newest word is
+#     finished history, never an abort authorization (observed 2026-09-03: a
+#     run parked at a post-CI gate after fix rounds advanced its head past
+#     the submitted head stayed parked forever once the task was cleaned up).
+#     A run already terminal
 #     (an outcome is set) or not parked at a gate is left untouched. Idempotent:
 #     an already-aborted run reads back terminal and is skipped on retry.
 #   Fix 2 - reap leaked descendant processes. A backgrounded/disowned process

@@ -83,10 +83,20 @@
 # releases its durable treehouse lease so the pool slot is freed,
 # never left leased forever. If the treehouse return fails, teardown leaves the
 # leased home and state in place instead of hiding a still-held lease.
-# Usage: fm-teardown.sh <task-id> [--force]
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
+#   --legacy-record accepts a task record that predates the spawn_gen field:
+#   teardown then proceeds only when the recorded endpoint is confirmed dead or
+#   agent-less (bin/fm-backend.sh's recovery-grade classifier), and without
+#   --force the worktree still passes the ordinary landed-work checks. The
+#   accepted legacy incarnation is stamped into the record before its close is
+#   recorded and named in the teardown line; the flag never relaxes the
+#   unlanded-work refusal, which --force alone can authorize. A legacy- stamp
+#   an abandoned attempt left behind never counts as a published incarnation:
+#   the record still reads as a legacy record, so the endpoint gate runs again
+#   and the retry still needs --legacy-record.
 #
 # Tmux process-group cleanup without lsof: when the backend is tmux and lsof is absent,
 # teardown must not signal a process group without proving it belongs to the recorded task
@@ -223,7 +233,20 @@ if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   exit 2
 fi
 ID=$1
-FORCE=${2:-}
+FORCE=
+LEGACY_RECORD_GIVEN=0
+shift
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --force) FORCE=--force ;;
+    --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
+    *)
+      echo "error: invalid teardown request" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
 fm_backlog_directory_present "$STATE" "state directory" || {
   echo "error: teardown refused: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
@@ -312,6 +335,11 @@ TEARDOWN_META_KIND=$(fm_meta_get "$META" kind)
 [ -n "$TEARDOWN_META_KIND" ] || TEARDOWN_META_KIND=ship
 TEARDOWN_CLEANUP_RECOVERY=$(fm_meta_get "$META" cleanup_recovery)
 TEARDOWN_META_SPAWN_GEN=
+TEARDOWN_LEGACY_PENDING=0
+TEARDOWN_LEGACY_ACCEPTED=0
+TEARDOWN_LEGACY_ENDPOINT=
+TEARDOWN_LEGACY_RETAINED_STAMP=
+TEARDOWN_LEGACY_PRESTAMP_SIZE=0
 TEARDOWN_BACKLOG_APPLIES=0
 TEARDOWN_BACKLOG_SKIP_REASON=
 if [ "$TEARDOWN_CLEANUP_RECOVERY" != orca ]; then
@@ -328,10 +356,39 @@ if [ "$TEARDOWN_CLEANUP_RECOVERY" != orca ]; then
 fi
 if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
   if ! fm_backlog_meta_spawn_gen "$META" "$STATE"; then
-    echo "error: task $ID's record has no spawn_gen that identifies one exact incarnation ($FM_BACKLOG_TRANSITION_ERROR); refusing automatic teardown - relaunch the task to publish an unambiguous incarnation, then retry teardown" >&2
-    exit 1
+    TEARDOWN_LEGACY_GEN_COUNT=$(LC_ALL=C awk -F= '$1 == "spawn_gen" { count++ } END { print count + 0 }' "$META" 2>/dev/null || printf '0\n')
+    if [ "$TEARDOWN_LEGACY_GEN_COUNT" = 0 ] && [ "$LEGACY_RECORD_GIVEN" = 1 ]; then
+      # A record that predates the incarnation field: acceptance is gated later,
+      # once the recorded endpoint is known, so its state can be confirmed dead
+      # or agent-less before any cleanup decision is made.
+      TEARDOWN_LEGACY_PENDING=1
+    elif [ "$TEARDOWN_LEGACY_GEN_COUNT" = 0 ]; then
+      echo "error: task $ID's record has no spawn_gen that identifies one exact incarnation ($FM_BACKLOG_TRANSITION_ERROR); refusing automatic teardown - relaunch the task to publish an unambiguous incarnation, then retry teardown, or pass --legacy-record once its recorded endpoint is confirmed dead or agent-less" >&2
+      exit 1
+    else
+      echo "error: task $ID's record has an unreadable spawn_gen that identifies one exact incarnation ($FM_BACKLOG_TRANSITION_ERROR); refusing automatic teardown - fix the record, then retry teardown" >&2
+      exit 1
+    fi
+  else
+    case "$FM_BACKLOG_META_SPAWN_GEN" in
+      legacy-*)
+        # Only this teardown path mints a legacy- token; a launch publishes
+        # s<epoch>.<pid>.<random>. So one still on a retained record is the
+        # stamp an abandoned --legacy-record attempt could not roll back, not
+        # an incarnation any spawn ever published. The record is still the
+        # legacy record it was, and is treated as one: the dead-or-agent-less
+        # endpoint gate runs again on the retry instead of being skipped by
+        # the abandoned attempt's own stamp.
+        if [ "$LEGACY_RECORD_GIVEN" != 1 ]; then
+          echo "error: task $ID's record carries the legacy incarnation stamp $FM_BACKLOG_META_SPAWN_GEN left by an abandoned --legacy-record teardown, not an incarnation published by a spawn; refusing automatic teardown - relaunch the task to publish an unambiguous incarnation, then retry teardown, or pass --legacy-record once its recorded endpoint is confirmed dead or agent-less" >&2
+          exit 1
+        fi
+        TEARDOWN_LEGACY_PENDING=1
+        TEARDOWN_LEGACY_RETAINED_STAMP=$FM_BACKLOG_META_SPAWN_GEN
+        ;;
+    esac
   fi
-  TEARDOWN_META_SPAWN_GEN=$FM_BACKLOG_META_SPAWN_GEN
+  [ "$TEARDOWN_LEGACY_PENDING" = 1 ] || TEARDOWN_META_SPAWN_GEN=$FM_BACKLOG_META_SPAWN_GEN
 fi
 # Cleanup never closes a captain call (see the header). Asked here, before any
 # destructive step, so "cannot tell" can refuse while everything is intact.
@@ -673,7 +730,6 @@ remote_secondmate_teardown() {
   route_home=$SECONDMATE_REGISTRY_HOME
   [ "$route_host" = "$remote_host" ] && [ "$route_root" = "$remote_root" ] && [ "$route_home" = "$remote_home" ] \
     || { echo "REFUSED: remote secondmate metadata does not match its registry route" >&2; return 1; }
-  [ -z "$FORCE" ] || [ "$FORCE" = --force ] || { echo "error: invalid teardown option: $FORCE" >&2; return 2; }
   handoff_wake_retire_validate || return 1
   remote_recovery_paths_validate initial || return 1
   if [ "$FORCE" != --force ] && [ "$REMOTE_OUTBOX_PRESENT" -eq 1 ]; then
@@ -793,6 +849,33 @@ CLEANUP_RECOVERY=$TEARDOWN_CLEANUP_RECOVERY
 KIND=$TEARDOWN_META_KIND
 MODE=$(grep '^mode=' "$META" | cut -d= -f2- || true)
 [ -n "$MODE" ] || MODE=no-mistakes
+
+# A record accepted as a legacy incarnation (no spawn_gen, --legacy-record
+# given) may be torn down only when its recorded endpoint is confidently gone
+# or agent-less; only the recovery-grade classifier's dead and missing license
+# that, and every ambiguous, unreadable, or unverified endpoint state refuses
+# while the record is still intact. Acceptance resolves the incarnation token
+# here; the record itself is stamped only once every landed-work refusal has
+# passed, immediately before the close marker binds to it, so any refusal
+# leaves the record byte-identical.
+if [ "$TEARDOWN_LEGACY_PENDING" = 1 ]; then
+  TEARDOWN_LEGACY_ENDPOINT=$(fm_backend_agent_state "$BACKEND" "$T")
+  case "$TEARDOWN_LEGACY_ENDPOINT" in
+    dead|missing) ;;
+    *)
+      echo "REFUSED: task $ID's record predates spawn_gen and its recorded endpoint reads '$TEARDOWN_LEGACY_ENDPOINT', not confidently dead or agent-less; --legacy-record teardown is refused while an agent may still be bound to it. Nothing was changed." >&2
+      echo "Reconcile the endpoint first (bin/fm-crew-state.sh $ID), or relaunch the task to publish an unambiguous incarnation, then retry teardown." >&2
+      exit 1
+      ;;
+  esac
+  if [ -n "$TEARDOWN_LEGACY_RETAINED_STAMP" ]; then
+    TEARDOWN_META_SPAWN_GEN=$TEARDOWN_LEGACY_RETAINED_STAMP
+  else
+    TEARDOWN_META_SPAWN_GEN="legacy-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  fi
+  TEARDOWN_LEGACY_ACCEPTED=1
+fi
+
 PUBLIC_FOLLOWUP_HOME=$FM_HOME
 PUBLIC_FOLLOWUP_STATE=$STATE
 PUBLIC_FOLLOWUP_WORK_HOME=main
@@ -1229,10 +1312,12 @@ backlog_done_args() {
 # invariant). This prints what already happened, so the follow-up wording stays
 # only where a human still owes the edit.
 backlog_refresh_reminder() {
-  local backlog_display
+  local backlog_display root
   [ "$KIND" = secondmate ] && return 0
   [ "$CLEANUP_RECOVERY" = orca ] && return 0
-  if backlog_display=$(fm_backlog_file "$DATA"); then
+  if root=$(fm_backlog_root "$DATA") && [ "$(fm_tasks_axi_backend "$root")" != markdown ]; then
+    backlog_display="this home's configured tasks-axi backend (data directory $DATA)"
+  elif backlog_display=$(fm_backlog_file "$DATA"); then
     :
   else
     backlog_display="${DATA%/}/backlog.md"
@@ -2699,5 +2784,9 @@ fi
 if [ -d "$STATE" ]; then
   "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort || true
 fi
-echo "teardown $ID complete (window $T, worktree $WT)"
+if [ "$TEARDOWN_LEGACY_ACCEPTED" = 1 ]; then
+  echo "teardown $ID complete (window $T, worktree $WT, legacy record accepted without spawn_gen: endpoint $TEARDOWN_LEGACY_ENDPOINT, incarnation $TEARDOWN_META_SPAWN_GEN)"
+else
+  echo "teardown $ID complete (window $T, worktree $WT)"
+fi
 backlog_refresh_reminder

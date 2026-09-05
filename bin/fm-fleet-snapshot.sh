@@ -57,8 +57,11 @@
 #     freshness is "cached" only for the cache source, and observed_at/age_seconds
 #     come from the selected summary's generation. Every successfully sampled home also carries
 #     reconcile_inventory independently of projection trust.
-#     Actionable captain holds
-#     appear in decisions_open; blocked captain holds remain queued with metadata.
+#     Actionable captain holds appear in decisions_open; every captain hold remains
+#     in the bounded queued inventory with its structured classification metadata.
+#     Structured-home input must declare the current hold-classifier schema; an
+#     older live ledger or cached copy is invalid even when it contains no captain
+#     holds, and leaves the home explicitly unreadable until its producer refreshes it.
 #   secondmate_landed: {records[],truncated[],unreadable[],partial[]} - the
 #     compatibility landed-work roll-up derived from secondmate_current. Readable
 #     structured homes are partial, not unreadable, when an unavailable child state
@@ -159,6 +162,13 @@ validate_positive_bound FM_SNAPSHOT_REGISTRY_LINES "$FM_SNAPSHOT_REGISTRY_LINES"
 validate_positive_bound FM_SNAPSHOT_REGISTRY_BYTES "$FM_SNAPSHOT_REGISTRY_BYTES"
 validate_positive_bound FM_SNAPSHOT_REGISTRY_RECORDS "$FM_SNAPSHOT_REGISTRY_RECORDS"
 validate_positive_bound FM_SNAPSHOT_REGISTRY_TIMEOUT "$FM_SNAPSHOT_REGISTRY_TIMEOUT"
+FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS=${FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS:-14}
+case "$FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" in
+  ''|*[!0-9]*)
+    echo "fm-fleet-snapshot: FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS must be a non-negative integer" >&2
+    exit 2
+    ;;
+esac
 
 # shellcheck source=bin/fm-backend.sh
 # shellcheck disable=SC1091
@@ -207,6 +217,12 @@ FM_SNAPSHOT_PARENT_ACTIVITY_TIMEOUT, with truncation disclosed in the result.
 The registered secondmate table uses FM_SNAPSHOT_REGISTRY_LINES,
 FM_SNAPSHOT_REGISTRY_BYTES, FM_SNAPSHOT_REGISTRY_RECORDS, and
 FM_SNAPSHOT_REGISTRY_TIMEOUT, with unavailability and truncation disclosed.
+Every captain hold carries hold_bucket, decided only from structured fields and
+never from hold reason or body prose: "blocked", "dated", "aged", or "live".
+An undated hold ages once its hold-set timestamp is at least
+FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS old (default 14; 0 ages every hold with a
+non-negative computed age); legacy holds without a stamp fall back to their
+since date, and re-holding with --until remains the durable deferral.
 EOF
 }
 
@@ -318,6 +334,15 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
   # shellcheck disable=SC2094
   jq -Rn --arg path "$backlog" --argjson archived_ids "$archived_ids" '
     def trim: gsub("^[[:space:]]+|[[:space:]]+$"; "");
+    def timestamp_epoch($d):
+      if ($d | type) != "string" then null
+      elif ($d | test("T")) then try ($d | fromdateiso8601) catch null
+      else try (($d + "T00:00:00Z") | fromdateiso8601) catch null end;
+    def days_between($from; $to):
+      (timestamp_epoch($from)) as $a
+      | (timestamp_epoch($to)) as $b
+      | if $a == null or $b == null then null
+        else (($b - $a) / 86400 | floor) end;
     def section_state:
       if . == "In flight" then "in_flight"
       elif . == "Queued" then "queued"
@@ -328,6 +353,8 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
       | if $v == null then null else ($v | trim) end;
     def metadata($rest; $key):
       cap($rest; ".*(?:\\(|,[[:space:]]*)" + $key + ":[[:space:]]*(?<v>[^,)]*)");
+    def hold_metadata($rest):
+      cap($rest; ".*\\(hold:[[:space:]]*(?<v>[^)]*)");
     def metadata_word($rest; $key):
       cap($rest; ".*(?:\\(|,[[:space:]]*)" + $key + "[[:space:]]+(?<v>[^,)]*)");
     def url_pattern: "https?://[^[:space:])\"<>]+";
@@ -393,9 +420,10 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
              repo:metadata($rest; "repo"),
              kind:metadata($rest; "kind"),
              priority:metadata($rest; "priority"),
-             hold_reason:metadata($rest; "hold"),
+             hold_reason:hold_metadata($rest),
              hold_kind:metadata($rest; "hold-kind"),
              hold_until:metadata($rest; "hold-until"),
+             hold_set:null,
              blocked_by:cap($rest; ".*blocked-by:[[:space:]]*(?<v>[^[:space:])]+).*"),
              blocked_by_ids:blocked_by_ids($rest),
              blocked_reason:blocked_reason($rest),
@@ -431,7 +459,8 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
        end)
     | .records |= map(
         if (.body_lines | length) > 0 then
-          .body_excerpt = ((.body_lines | join(" "))[:240])
+          .hold_set = cap(.body_lines[0]; "^Captain hold set:[[:space:]]*(?<v>[0-9]{4}-[0-9]{2}-[0-9]{2}(?:T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?)$")
+          | .body_excerpt = ((.body_lines | join(" "))[:240])
         else . end)
     | .records as $records
     | (reduce ($records[] | select(.structured)) as $record ({};
@@ -452,13 +481,15 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
                elif .state == "queued" then "queued"
                else "done" end)
           | .requires_child_metadata = (.current_role == "worker")
-          | .captain_actionable =
-              (.state == "queued" and .hold_kind == "captain"
-               and .hold_reason != null and (.unresolved_blocker_ids | length) == 0
-               and (.hold_until == null or .hold_until <= $today))
-          | .deferred_marker =
-              ((((.hold_reason // "") + " " + (.body_excerpt // ""))
-                | test("SUPERSEDED|NOT REQUIRED|NOT-REQUIRED|DEFERRED"; "i")))
+          | .hold_age_days = days_between((.hold_set // .since); $now)
+          | .hold_bucket =
+              (if .hold_kind != "captain" or .hold_reason == null or .state == "done" then null
+               elif (.unresolved_blocker_ids | length) > 0 then "blocked"
+               elif .hold_until != null and .hold_until > $today then "dated"
+               elif .hold_until == null and .hold_age_days != null
+                    and .hold_age_days >= $age_days then "aged"
+               else "live" end)
+          | .captain_actionable = (.hold_bucket == "live")
         else . end)
     | del(.section,.order)
   ' < "$backlog"
@@ -874,7 +905,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     | ([ $backlog.records[]? | select(.state == "in_flight" and .structured) ]) as $owned_in_flight
     | ([ $backlog.records[]?
          | select(.structured and
-             (.state == "queued" or
+             (.hold_bucket != null or .state == "queued" or
               (.state == "in_flight" and .current_role == "held"
                and (.id as $id
                     | any($tasks[]; .id == $id and .current_state.state == "working") | not)))) ]) as $queued_all
@@ -883,7 +914,8 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
          | {id,key:.id,verb:"captain-hold",summary:(.title | trunc(160)),
             reason:(.hold_reason | trunc(160)),
             hold_until:(.hold_until // null),
-            deferred_marker:(.deferred_marker // false),source:"backlog"} ]) as $captain_holds_all
+            hold_bucket:(.hold_bucket // null),
+            hold_age_days:(.hold_age_days // null),source:"backlog"} ]) as $captain_holds_all
     | ([ $backlog.records[]? | select(.state == "done" and .structured and .hold_kind != "captain")
          | {id:(.id | trunc(120)),title:(.title | trunc(120)),
             pr_url:((.pr_url // null) | if . == null then null else trunc(500) end),
@@ -972,6 +1004,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
        else "no_active_work" end) as $state
     | {
         schema:"fm-secondmate-home-summary.v1",
+        hold_classifier_schema:"fm-captain-hold-buckets.v1",
         generated:$generated,
         generated_epoch:$generated_epoch,
         home:$home,
@@ -990,7 +1023,8 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
           hold_reason:((.hold_reason // null) | if . == null then null else trunc(160) end),
           hold_kind:((.hold_kind // null) | if . == null then null else trunc(40) end),
           hold_until:((.hold_until // null) | if . == null then null else trunc(40) end),
-          deferred_marker:(.deferred_marker // false),
+          hold_bucket:(.hold_bucket // null),
+          hold_age_days:(.hold_age_days // null),
           captain_actionable:(.captain_actionable // false),
           repo:((.repo // null) | if . == null then null else trunc(120) end),
           kind:((.kind // null) | if . == null then null else trunc(40) end)}][:$queued_n]),
@@ -1239,7 +1273,9 @@ prepare_remote_summary_collection() {  # <sampled-row-json-lines>
   SNAPSHOT_SUMMARY_FILTER="$SNAPSHOT_COLLECT_DIR/summary-filter.jq"
   cat > "$SNAPSHOT_SUMMARY_FILTER" <<'JQ'
 length == 1 and (.[0] |
-  .schema == "fm-secondmate-home-summary.v1" and .home == $home
+  .schema == "fm-secondmate-home-summary.v1"
+  and .hold_classifier_schema == "fm-captain-hold-buckets.v1"
+  and .home == $home
   and (.generated | type) == "string"
   and (.generated_epoch | type) == "number" and .generated_epoch >= 0 and (.generated_epoch | floor) == .generated_epoch
   and (.valid | type) == "boolean" and (.state | type) == "string"

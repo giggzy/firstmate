@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for cleanup endpoint identity validation.
+# Regression tests for cleanup endpoint and worktree-slot identity validation.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -14,6 +14,7 @@ make_case() {  # <name>
   mkdir -p "$TMP_ROOT/$dir/home/state" "$TMP_ROOT/$dir/home/data" \
     "$TMP_ROOT/$dir/home/config" "$TMP_ROOT/$dir/fakebin" \
     "$TMP_ROOT/$dir/worktree" "$TMP_ROOT/$dir/project"
+  git init -q "$TMP_ROOT/$dir/project"
   : > "$TMP_ROOT/$dir/worktree/sentinel"
   : > "$TMP_ROOT/$dir/runtime.log"
   cat > "$TMP_ROOT/$dir/fakebin/tmux" <<'SH'
@@ -32,6 +33,19 @@ exit 0
 SH
   chmod +x "$TMP_ROOT/$dir/fakebin/tmux" "$TMP_ROOT/$dir/fakebin/treehouse"
   printf '%s\n' "$TMP_ROOT/$dir"
+}
+
+mark_case_as_treehouse_pool() {  # <case>
+  local dir=$1
+  rm -rf "$dir/worktree"
+  mkdir -p "$dir/pool/1"
+  git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+    commit --allow-empty -qm pool-fixture
+  git -C "$dir/project" worktree add -q --detach "$dir/pool/1/project"
+  ln -s "pool/1/project" "$dir/worktree"
+  printf '{"worktrees":[{"name":"1","path":"%s"}]}\n' \
+    "$dir/pool/1/project" > "$dir/pool/treehouse-state.json"
+  : > "$dir/worktree/sentinel"
 }
 
 run_case() {  # <case> <id>
@@ -135,6 +149,42 @@ test_control_lock_contention_refuses_before_mutation() {
   kill "$holder" 2>/dev/null || true
   wait "$holder" 2>/dev/null || true
   pass "fm-teardown: a concurrent lifecycle action refuses before mutation"
+}
+
+test_non_pool_teardown_ignores_task_set_lock() {
+  local dir id=non-pool-task lock ready holder i=0
+  dir=$(make_case non-pool-task-set-lock)
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=isolated:fm-$id" "endpoint_task_id=$id" \
+    "worktree=$dir/missing-worktree" "project=$dir/project" "kind=scout"
+  lock="$dir/home/state/.task-set.lock"
+  ready="$dir/task-set-lock-ready"
+  (
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$lock" || exit 1
+    trap 'fm_lock_release "$lock"' EXIT
+    : > "$ready"
+    sleep 30
+  ) &
+  holder=$!
+  while [ ! -e "$ready" ] && [ "$i" -lt 100 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -e "$ready" ] || {
+    kill "$holder" 2>/dev/null || true
+    wait "$holder" 2>/dev/null || true
+    fail "could not stage an in-progress task publication"
+  }
+
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr" \
+    || fail "non-pool teardown was blocked by an unrelated task publication: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$id.meta" "non-pool teardown left task metadata"
+  assert_present "$lock" "non-pool teardown removed the publisher's lock"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  pass "fm-teardown: non-pool cleanup ignores unrelated task publication locks"
 }
 
 test_metadata_lock_serializes_destructive_cleanup() {
@@ -429,6 +479,7 @@ SH
 
 test_invalid_endpoint_records_refuse_before_mutation
 test_control_lock_contention_refuses_before_mutation
+test_non_pool_teardown_ignores_task_set_lock
 test_metadata_lock_serializes_destructive_cleanup
 test_supported_backend_endpoint_records_validate
 test_tmux_empty_target_refuses_without_invocation

@@ -138,9 +138,9 @@ printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case "${1:-} ${2:-}" in
   "api graphql")
     printf '%s\n' \
-      'state=MERGED' \
-      'merged=true' \
-      'queued=false' \
+      "state=${FM_TEST_GH_GRAPHQL_STATE:-MERGED}" \
+      "merged=${FM_TEST_GH_GRAPHQL_MERGED:-true}" \
+      "queued=${FM_TEST_GH_GRAPHQL_QUEUED:-false}" \
       'base=main'
     exit 0
     ;;
@@ -152,11 +152,16 @@ case "${1:-} ${2:-}" in
         ;;
     esac
     ;;
+  "pr merge")
+    [ -z "${FM_TEST_GH_MERGE_HOOK:-}" ] || "$FM_TEST_GH_MERGE_HOOK"
+    exit 0
+    ;;
 esac
 case " $* " in
   *" headRefOid "*) printf '%s\n' "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}" ;;
   *" state "*)
     [ "${FM_TEST_GH_FAIL:-0}" = 0 ] || exit 1
+    [ -z "${FM_TEST_GH_STATE_STARTED:-}" ] || : > "$FM_TEST_GH_STATE_STARTED"
     [ "${FM_TEST_GH_SLEEP:-0}" = 0 ] || sleep "$FM_TEST_GH_SLEEP"
     printf '%s\n' "${FM_TEST_GH_STATE:-OPEN}"
     ;;
@@ -201,10 +206,14 @@ write_task_meta() {
     "mode=no-mistakes"
 }
 
+# Extra "field=value" arguments are written before pr=, because
+# fm_pr_metadata_identity_parse rejects an unrecognised line after it.
 write_poll_meta() {
   local state=$1 id=$2 url=$3
+  shift 3
   fm_write_meta "$state/$id.meta" \
     "window=fm-$id" \
+    "$@" \
     "pr=$url"
 }
 
@@ -624,9 +633,10 @@ SH
 
 run_watcher_bounded() {
   local home=$1 fakebin=$2 check_interval=${FM_TEST_CHECK_INTERVAL:-0} watch_root=${FM_TEST_WATCH_ROOT:-$ROOT}
+  local check_timeout=${FM_TEST_CHECK_TIMEOUT:-1}
   shift 2
   perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 10; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
-    env FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT=1 \
+    env FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT="$check_timeout" \
       FM_POLL=0.02 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 PATH="$fakebin:$BASE_PATH" "$WATCH" "$@"
 }
 

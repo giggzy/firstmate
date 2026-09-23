@@ -734,12 +734,23 @@ SH
   pass "valid direct and merge flows record exact metadata and reject multiline head metadata"
 }
 
+# Runs one watcher under a hang guard that TERMs it and returns 124 once it has
+# used sixty seconds of its own time. The guard pauses while the file named by
+# FM_TEST_WATCH_BOUND_PAUSE exists, so a case that holds the watcher on work it
+# injects, or makes it wait on concurrent work it started, charges that work's
+# duration to itself instead of to the watcher.
+# FM_TEST_CHECK_TIMEOUT sets the per-check timeout for a case that exercises it.
+# Otherwise the product default applies: a tighter override silently kills a
+# correct poll on a loaded machine, and the watcher then only retries it or
+# exits on a later check's wake without the poll's result.
 run_watcher_bounded() {
   local home=$1 fakebin=$2 check_interval=${FM_TEST_CHECK_INTERVAL:-0} watch_root=${FM_TEST_WATCH_ROOT:-$ROOT}
-  local check_timeout=${FM_TEST_CHECK_TIMEOUT:-1}
+  local check_timeout_env=(-u FM_CHECK_TIMEOUT)
+  [ -z "${FM_TEST_CHECK_TIMEOUT:-}" ] || check_timeout_env=("FM_CHECK_TIMEOUT=$FM_TEST_CHECK_TIMEOUT")
   shift 2
-  perl -e 'my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } local $SIG{ALRM}=sub { kill "TERM", $pid; waitpid $pid, 0; exit 124 }; alarm 60; waitpid $pid, 0; alarm 0; exit($? >> 8)' \
-    env FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" FM_CHECK_TIMEOUT="$check_timeout" \
+  perl -MPOSIX=WNOHANG -MTime::HiRes=time,sleep -e 'my $pause=shift; my $left=60; my $pid=fork; die unless defined $pid; if (!$pid) { exec @ARGV } my $last=time; while (waitpid($pid, WNOHANG) == 0) { my $now=time; $left -= $now - $last unless length $pause && -e $pause; $last=$now; if ($left <= 0) { kill "TERM", $pid; waitpid $pid, 0; exit 124 } sleep 0.02 } exit($? >> 8)' \
+    "${FM_TEST_WATCH_BOUND_PAUSE:-}" env "${check_timeout_env[@]}" \
+      FM_HOME="$home" FM_ROOT_OVERRIDE="$watch_root" FM_CHECK_INTERVAL="$check_interval" \
       FM_POLL=0.02 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 PATH="$fakebin:$BASE_PATH" "$WATCH" "$@"
 }
 
@@ -885,11 +896,15 @@ SH
 }
 
 test_concurrent_watcher_sees_only_complete_publication() {
-  local n dir direct_pid rc i
+  local n dir direct_pid direct_rc watch_pid rc i id
+  # Arming also registers the contributions observer, and the watcher runs one
+  # cycle's checks in name order. This task sorts first, so the watcher reaches
+  # the poll under test, and stops on it, before that unrelated observer.
+  id=a-task
   n=1
   while [ "$n" -le 3 ]; do
     dir=$(make_case "concurrent-$n")
-    write_task_meta "$dir"
+    write_task_meta "$dir" "$id"
     cat > "$dir/fakebin/cp" <<SH
 #!/usr/bin/env bash
 '$REAL_CP' "\$@" || exit 1
@@ -898,7 +913,7 @@ SH
     chmod +x "$dir/fakebin/cp"
 
     FM_TEST_GH_HEAD=0123456789abcdef0123456789abcdef01234567 \
-      run_check_entry "$dir" task-a https://github.com/o/r/pull/1 > "$dir/direct.out" 2> "$dir/direct.err" &
+      run_check_entry "$dir" "$id" https://github.com/o/r/pull/1 > "$dir/direct.out" 2> "$dir/direct.err" &
     direct_pid=$!
     i=0
     while [ "$i" -lt 100 ] && ! find "$dir/home/state" -name '.fm-pr-poll-check.*' -print | grep . >/dev/null; do
@@ -907,24 +922,31 @@ SH
     done
     [ "$i" -lt 100 ] || fail "atomic publication did not reach staged check"
 
-    set +e
-    FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
-    rc=$?
-    set -e
-    wait "$direct_pid" || fail "concurrent direct arming failed"
-    [ "$rc" -eq 0 ] || fail "concurrent watcher did not complete"
+    # The watcher runs while publication is still in flight, and its hang
+    # guard is not charged for the time it spends waiting on that publication.
+    : > "$dir/direct-in-flight"
+    FM_TEST_WATCH_BOUND_PAUSE="$dir/direct-in-flight" FM_TEST_GH_STATE=MERGED \
+      run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err" &
+    watch_pid=$!
+    direct_rc=0
+    wait "$direct_pid" || direct_rc=$?
+    rm -f "$dir/direct-in-flight"
+    rc=0
+    wait "$watch_pid" || rc=$?
+    [ "$direct_rc" -eq 0 ] || fail "concurrent direct arming failed"
+    [ "$rc" -eq 0 ] || fail "concurrent watcher did not complete (rc=$rc): $(cat "$dir/watch.err")"
     grep -q '^check: .*: merged$' "$dir/watch.out" || fail "concurrent watcher never saw complete poll"
     [ ! -s "$dir/watch.err" ] || fail "concurrent watcher observed a partial artifact error"
-    if [ -e "$dir/home/state/task-a.check.sh" ]; then
-      cmp -s "$POLL" "$dir/home/state/task-a.check.sh" || fail "concurrent publication check bytes changed"
-      [ "$(file_mode "$dir/home/state/task-a.check.sh")" = 600 ] || fail "concurrent check mode was not private"
-      [ "$(file_mode "$dir/home/state/task-a.pr-poll")" = 600 ] || fail "concurrent sidecar mode was not private"
-      [ "$(file_mode "$dir/home/state/task-a.pr-poll-registration")" = 600 ] \
+    if [ -e "$dir/home/state/$id.check.sh" ]; then
+      cmp -s "$POLL" "$dir/home/state/$id.check.sh" || fail "concurrent publication check bytes changed"
+      [ "$(file_mode "$dir/home/state/$id.check.sh")" = 600 ] || fail "concurrent check mode was not private"
+      [ "$(file_mode "$dir/home/state/$id.pr-poll")" = 600 ] || fail "concurrent sidecar mode was not private"
+      [ "$(file_mode "$dir/home/state/$id.pr-poll-registration")" = 600 ] \
         || fail "concurrent registration mode was not private"
-      fm_pr_poll_artifacts_valid "$dir/home/state" task-a "$POLL" \
+      fm_pr_poll_artifacts_valid "$dir/home/state" "$id" "$POLL" \
         || fail "concurrent publication did not leave canonical provenance"
     else
-      assert_poll_absent "$dir/home/state" task-a
+      assert_poll_absent "$dir/home/state" "$id"
     fi
     n=$((n + 1))
   done
@@ -1217,7 +1239,7 @@ SH
 }
 
 test_returned_custom_check_descendants_are_drained() {
-  local backend dir state fakebin ready direct_done child_pid_file sentinel watcher_pid child_pid i rc alive force_fallback
+  local backend dir state fakebin ready direct_done child_pid_file child_pid check rc force_fallback
   for backend in installed-timeout fallback-timeout; do
     dir=$(make_case "returned-custom-descendant-$backend")
     state="$dir/home/state"
@@ -1225,17 +1247,30 @@ test_returned_custom_check_descendants_are_drained() {
     ready="$dir/descendant-ready"
     direct_done="$dir/direct-check-done"
     child_pid_file="$dir/descendant.pid"
-    sentinel="$dir/descendant-sentinel"
+    # The descendant ignores TERM and never exits on its own while this case's
+    # directory exists, so its absence can only mean the watcher drained it.
     cat > "$state/custom.check.sh" <<'SH'
 #!/usr/bin/env bash
-perl -e '$SIG{TERM}="IGNORE"; open my $ready, ">", $ENV{FM_TEST_DESCENDANT_READY} or die $!; print {$ready} "ready\n"; close $ready; select undef, undef, undef, 4; open my $sentinel, ">", $ENV{FM_TEST_DESCENDANT_SENTINEL} or die $!; print {$sentinel} "late\n"; close $sentinel; select undef, undef, undef, 1' &
+perl -e '$SIG{TERM}="IGNORE"; open my $ready, ">", $ENV{FM_TEST_DESCENDANT_READY} or die $!; print {$ready} "ready\n"; close $ready; select undef, undef, undef, 0.2 while -d $ENV{FM_TEST_DESCENDANT_HOLD}' &
 printf '%s\n' "$!" > "$FM_TEST_DESCENDANT_PID"
 while [ ! -s "$FM_TEST_DESCENDANT_READY" ]; do sleep 0.01; done
 : > "$FM_TEST_DIRECT_DONE"
 SH
-    chmod 0700 "$state/custom.check.sh"
-    FM_HOME="$dir/home" "$REGISTER" custom >/dev/null \
-      || fail "could not register $backend returned-descendant check"
+    # The watcher runs this check next in the same cycle, only after it has
+    # finished with the returned one, so its wake both records whether the
+    # descendant outlived that drain and stops the watcher.
+    cat > "$state/z-drain-witness.check.sh" <<'SH'
+#!/usr/bin/env bash
+case "$(ps -o stat= -p "$(cat "$FM_TEST_DESCENDANT_PID")" 2>/dev/null)" in
+  ''|Z*) printf 'descendant drained\n' ;;
+  *) printf 'descendant alive\n' ;;
+esac
+SH
+    for check in custom z-drain-witness; do
+      chmod 0700 "$state/$check.check.sh"
+      FM_HOME="$dir/home" "$REGISTER" "$check" >/dev/null \
+        || fail "could not register $backend returned-descendant $check check"
+    done
     if [ "$backend" = installed-timeout ]; then
       cat > "$fakebin/timeout" <<'SH'
 #!/usr/bin/env bash
@@ -1249,46 +1284,22 @@ SH
       force_fallback=1
     fi
 
-    FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" FM_POLL=0.1 FM_CHECK_INTERVAL=999999 \
-      FM_CHECK_TIMEOUT=10 FM_HEARTBEAT=999999 FM_SIGNAL_GRACE=0 \
-      FM_CHECK_FORCE_FALLBACK="$force_fallback" FM_TEST_DESCENDANT_READY="$ready" \
-      FM_TEST_DESCENDANT_SENTINEL="$sentinel" FM_TEST_DESCENDANT_PID="$child_pid_file" \
-      FM_TEST_DIRECT_DONE="$direct_done" PATH="$fakebin:$BASE_PATH" "$WATCH" \
-      > "$dir/watch.out" 2> "$dir/watch.err" &
-    watcher_pid=$!
-    i=0
-    while [ "$i" -lt 200 ]; do
-      [ -s "$ready" ] && [ -s "$child_pid_file" ] && [ -e "$direct_done" ] \
-        && [ -e "$state/.last-check" ] && break
-      kill -0 "$watcher_pid" 2>/dev/null || break
-      sleep 0.02
-      i=$((i + 1))
-    done
-    [ -s "$ready" ] && [ -s "$child_pid_file" ] && [ -e "$direct_done" ] \
-      && [ -e "$state/.last-check" ] \
-      || fail "$backend watcher did not complete the direct custom check"
-    child_pid=$(cat "$child_pid_file")
-    kill -TERM "$watcher_pid" 2>/dev/null || fail "could not stop $backend watcher"
-    i=0
-    while process_is_live_non_zombie "$watcher_pid" && [ "$i" -lt 150 ]; do
-      sleep 0.02
-      i=$((i + 1))
-    done
-    if process_is_live_non_zombie "$watcher_pid"; then
-      kill -KILL "$watcher_pid" 2>/dev/null || true
-      wait "$watcher_pid" 2>/dev/null || true
-      kill -KILL "$child_pid" 2>/dev/null || true
-      fail "$backend watcher did not stop after the direct check returned"
-    fi
     rc=0
-    wait "$watcher_pid" || rc=$?
-    [ "$rc" -ne 0 ] || fail "$backend signaled watcher exited successfully"
-    alive=0
-    process_is_live_non_zombie "$child_pid" && alive=1
-    [ "$alive" -eq 0 ] || kill -KILL "$child_pid" 2>/dev/null || true
-    wait "$child_pid" 2>/dev/null || true
-    [ "$alive" -eq 0 ] || fail "$backend watcher left a returned check descendant alive"
-    [ ! -e "$sentinel" ] || fail "$backend returned check descendant reached its sentinel"
+    FM_TEST_CHECK_TIMEOUT=10 FM_CHECK_FORCE_FALLBACK="$force_fallback" \
+      FM_TEST_DESCENDANT_READY="$ready" FM_TEST_DESCENDANT_HOLD="$dir" \
+      FM_TEST_DESCENDANT_PID="$child_pid_file" FM_TEST_DIRECT_DONE="$direct_done" \
+      run_watcher_bounded "$dir/home" "$fakebin" > "$dir/watch.out" 2> "$dir/watch.err" || rc=$?
+    child_pid=$(cat "$child_pid_file" 2>/dev/null || true)
+    if [ -n "$child_pid" ] && process_is_live_non_zombie "$child_pid"; then
+      kill -KILL "$child_pid" 2>/dev/null || true
+      fail "$backend watcher left a returned check descendant alive"
+    fi
+    [ "$rc" -eq 0 ] \
+      || fail "$backend watcher did not stop after the direct check returned (rc=$rc): $(cat "$dir/watch.err")"
+    [ -s "$ready" ] && [ -n "$child_pid" ] && [ -e "$direct_done" ] \
+      || fail "$backend watcher did not complete the direct custom check"
+    grep -qxF "check: $state/z-drain-witness.check.sh: descendant drained" "$dir/watch.out" \
+      || fail "$backend watcher moved past a returned check before draining its descendant: $(cat "$dir/watch.out")"
     ! find "$state" -maxdepth 1 -name '.fm-custom-check.*' -print | grep . >/dev/null \
       || fail "$backend watcher left a private custom check snapshot"
     ! find "$state" -maxdepth 1 -name '.fm-check-output.*' -print | grep . >/dev/null \

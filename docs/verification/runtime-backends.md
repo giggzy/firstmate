@@ -118,6 +118,28 @@ Valid cleanup removed only the exact task-bound target and left the control wind
 The metadata-only validation covers tmux, Herdr, Zellij, Orca, and cmux before backend dispatch.
 Claude, Codex, OpenCode, Pi, pi-signed, Grok, and Kimi share that backend cleanup boundary; their harness-specific hook files and token cleanup run only after it, so no harness needs a separate endpoint parser.
 
+### Tmux process-group cleanup without lsof
+
+When `lsof` is absent and the tmux backend is in use, `fm-teardown.sh` must cleanly reap any leaked process groups without using `lsof` to verify ownership. Tmux's `display-message` silently falls back to an arbitrary other window when the exact named task window is gone, which would incorrectly signal the control pane's process group instead of the task's on a cleanup retry after the window closes.
+
+The verified fallback was tested on 2026-09-26 with tmux 3.6a on macOS:
+
+```sh
+tests/fm-teardown-endpoint-safety.test.sh::test_isolated_tmux_no_lsof_reap_and_retry
+```
+
+The live-task and retry-after-close fixtures both used an isolated socket-bound tmux server, excluded `/usr/sbin` from the PATH (so lsof remained unavailable while ps, git, and tmux stayed accessible), and verified:
+
+- First teardown call kills the live task pane's process group and confirms the control pane survives.
+- Second teardown call (cleanup retry after the task window is gone) safely refuses to reap because the exact window lookup fails, preventing accidental signalling of the control pane.
+- The counterfactual demonstrates tmux's fallback: a non-exact `display-message` silently returns the control pane, while exact lookups with `has-session -t =session:=window` refuse once the named window is closed.
+
+Observed guarantee:
+
+```text
+ok - fm-teardown: without lsof a live task group is reaped and an absent task pane cannot reap the control pane on retry
+```
+
 ## Herdr
 
 The compatibility floor is protocol 14.

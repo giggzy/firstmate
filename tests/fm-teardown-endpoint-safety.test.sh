@@ -336,3 +336,5 @@ test_tmux_empty_target_refuses_without_invocation
 test_recorded_process_identity_cleanup_is_exact
 test_isolated_tmux_invalid_and_valid_cleanup
 test_isolated_tmux_no_lsof_reap_and_retry
+
+echo "# all fm-teardown-endpoint-safety tests passed"

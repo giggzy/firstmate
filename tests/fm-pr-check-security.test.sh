@@ -2968,6 +2968,89 @@ test_merged_poll_retires_once() {
   pass "validated merged polls notify once and retire before the next watcher cycle"
 }
 
+test_decision_inventory_preserves_registered_pr_poll() {
+  local dir control state id url head meta before rc
+  command -v tasks-axi >/dev/null 2>&1 || { echo 'skip: tasks-axi not found'; return 0; }
+  dir=$(make_case decision-inventory-pr)
+  control=$(make_case decision-inventory-control)
+  id=task-a
+  url=https://github.com/o/r/pull/1
+  head=0123456789abcdef0123456789abcdef01234567
+  state="$dir/home/state"
+  for case_dir in "$dir" "$control"; do
+    cp "$ROOT/.tasks.toml" "$case_dir/home/.tasks.toml"
+    printf '## In flight\n\n## Queued\n\n## Done\n' > "$case_dir/home/data/backlog.md"
+    write_task_meta "$case_dir" "$id"
+    run_check_entry "$case_dir" "$id" "$url" >/dev/null \
+      || fail "could not arm registered PR poll for $case_dir"
+    fm_pr_poll_artifacts_valid "$case_dir/home/state" "$id" "$POLL" \
+      || fail "newly registered PR poll was not valid for $case_dir"
+  done
+  meta="$state/$id.meta"
+  assert_grep "pr_head=$head" "$meta" "PR head fixture was not recorded"
+  printf 'x_request=sample-request\n' >> "$meta"
+  fm_pr_poll_artifacts_valid "$state" "$id" "$POLL" \
+    || fail 'valid X tail unexpectedly invalidated registered PR identity'
+  fm_pr_poll_artifacts_valid "$control/home/state" "$id" "$POLL" \
+    || fail 'untouched registered PR identity unexpectedly failed'
+
+  FM_HOME="$dir/home" "$ROOT/bin/fm-decision-hold.sh" complete "$id" --none >/dev/null \
+    || fail 'could not stamp the captain-call inventory'
+  if fm_pr_poll_artifacts_valid "$state" "$id" "$POLL"; then
+    :
+  else
+    fail 'captain-call stamp invalidated the previously registered PR identity'
+  fi
+  fm_pr_poll_artifacts_valid "$control/home/state" "$id" "$POLL" \
+    || fail 'untouched registered PR identity failed after stamping the other task'
+  before=$(shasum -a 256 "$meta" | awk '{print $1}')
+  FM_HOME="$dir/home" "$ROOT/bin/fm-decision-hold.sh" complete "$id" --none >/dev/null \
+    || fail 'could not repeat the same captain-call inventory'
+  [ "$(shasum -a 256 "$meta" | awk '{print $1}')" = "$before" ] \
+    || fail 'identical captain-call stamp changed metadata'
+  FM_HOME="$dir/home" "$ROOT/bin/fm-decision-hold.sh" hold "$id" route \
+    --title 'Choose route' --reason 'captain route choice pending' --repo sample >/dev/null \
+    || fail 'could not create a second captain-call inventory entry'
+  FM_HOME="$dir/home" "$ROOT/bin/fm-decision-hold.sh" complete "$id" route >/dev/null \
+    || fail 'could not expand the captain-call inventory'
+  fm_pr_poll_artifacts_valid "$state" "$id" "$POLL" \
+    || fail 'expanded captain-call inventory invalidated registered PR identity'
+  [ "$(grep -c '^decisions_reviewed=' "$meta")" -eq 1 ] \
+    || fail 'repeated stamps duplicated the reviewed field'
+  [ "$(grep -c '^decision_keys=' "$meta")" -eq 1 ] \
+    || fail 'repeated stamps duplicated the inventory field'
+  grep -qxF 'decision_keys=route' "$meta" || fail 'expanded decision inventory was lost'
+  grep -qxF 'x_request=sample-request' "$meta" || fail 'X request metadata was lost'
+  grep -qxF "pr_head=$head" "$meta" || fail 'PR head metadata was lost'
+
+  # An older append left the inventory after pr= and made the identity invalid.
+  # A later review must repair that ordering without dropping the X link.
+  printf 'decisions_reviewed=0\ndecision_keys=route\n' >> "$meta"
+  ! fm_pr_poll_artifacts_valid "$state" "$id" "$POLL" \
+    || fail 'legacy appended inventory unexpectedly kept the PR identity valid'
+  FM_HOME="$dir/home" "$ROOT/bin/fm-decision-hold.sh" complete "$id" route >/dev/null \
+    || fail 'could not repair the legacy appended inventory'
+  fm_pr_poll_artifacts_valid "$state" "$id" "$POLL" \
+    || fail 'legacy inventory rewrite did not restore registered PR identity'
+  [ "$(grep -c '^decisions_reviewed=' "$meta")" -eq 1 ] \
+    || fail 'legacy inventory rewrite retained a duplicate reviewed field'
+  [ "$(grep -c '^decision_keys=' "$meta")" -eq 1 ] \
+    || fail 'legacy inventory rewrite retained a duplicate decision list'
+  grep -qxF 'x_request=sample-request' "$meta" || fail 'legacy rewrite lost X request metadata'
+
+  add_stop_custom_check "$dir"
+  set +e
+  FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "watcher could not process stamped PR poll: $(cat "$dir/watch.err")"
+  case "$(cat "$dir/watch.out")" in
+    check:*task-a.check.sh:*merged) ;;
+    *) fail 'stamped PR identity did not deliver the merged notification' ;;
+  esac
+  pass 'repeated captain-call stamps preserve registered PR identity and merged notifications'
+}
+
 test_persistent_secondmate_retirement_is_poll_only() {
   local dir state meta_before status_before registry_before endpoint_before rc
   dir=$(make_case merged-retirement-secondmate)
@@ -3325,9 +3408,15 @@ test_gitlab_merged_poll_retires() {
   pass "GitHub and GitLab exact merged results share one retirement path"
 }
 
+if [ "${FM_TEST_FOCUSED_DECISION_INVENTORY:-0}" = 1 ]; then
+  test_decision_inventory_preserves_registered_pr_poll
+  exit 0
+fi
+
 test_parser_matrix
 test_gitlab_merge_watch
 test_merged_poll_retires_once
+test_decision_inventory_preserves_registered_pr_poll
 test_persistent_secondmate_retirement_is_poll_only
 test_retirement_crash_recovery
 test_external_merge_transition_retires_only_terminal_poll

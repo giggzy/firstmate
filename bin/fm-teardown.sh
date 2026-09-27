@@ -57,6 +57,15 @@
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
 #
+# Tmux process-group cleanup without lsof: when the backend is tmux and lsof is absent,
+# teardown must not signal a process group without proving it belongs to the recorded task
+# window - tmux display-message alone silently falls back to another window when the named
+# window is gone. Teardown verifies the exact task window still exists by name, captures the
+# pane's PID and process start time, then - after the initial TERM/KILL cycle - retries the
+# ownership check to catch stragglers. On a cleanup retry (after the task window is gone),
+# it safely refuses to reap because the window is gone, preventing false positives that would
+# signal the control pane's process group instead.
+#
 # Transient / stale worktree git lock recovery (teardown-lock-race): a crew process
 # killed mid-git-operation can leave a .git/worktrees/<wt>/index.lock (or, for a
 # non-linked worktree, .git/index.lock) that makes `treehouse return --force` fail

@@ -268,8 +268,71 @@ SH
   pass "fm-teardown: exact tmux cleanup preserves invalid and prefix-matched neighbors while removing only the recorded target"
 }
 
+test_isolated_tmux_no_lsof_reap_and_retry() {
+  local dir socket session='reap safety' id=reap-task target=fm-reap-task
+  local control_pid target_pid rc
+  [ -n "$REAL_TMUX" ] || { echo "skip - tmux not installed"; return 0; }
+  dir=$(make_case isolated-reap)
+  socket="fm-reap-test-$$"
+  env -u TMUX -u TMUX_PANE "$REAL_TMUX" -L "$socket" new-session -d -s "$session" -n main 'sleep 120' \
+    || fail "could not start isolated tmux server"
+  env -u TMUX -u TMUX_PANE "$REAL_TMUX" -L "$socket" new-window -d -t "=$session:" -n "$target" 'sleep 120' \
+    || fail "could not start isolated task window"
+  control_pid=$(env -u TMUX -u TMUX_PANE "$REAL_TMUX" -L "$socket" display-message -p -t "=$session:=main" '#{pane_pid}')
+  target_pid=$(env -u TMUX -u TMUX_PANE "$REAL_TMUX" -L "$socket" display-message -p -t "=$session:=$target" '#{pane_pid}')
+  # This wrapper is the only tmux executable on the test PATH. It pins every
+  # teardown invocation to this dedicated socket, never the ambient server.
+  cat > "$dir/fakebin/tmux" <<SH
+#!/usr/bin/env bash
+exec '$REAL_TMUX' -L '$socket' "\$@"
+SH
+  # Fail the first return after closing the task window, as in a cleanup retry.
+  cat > "$dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+if [ ! -f '$dir/returned-once' ]; then
+  touch '$dir/returned-once'
+  exit 1
+fi
+exit 0
+SH
+  chmod +x "$dir/fakebin/tmux" "$dir/fakebin/treehouse"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=$session:$target" "endpoint_task_id=$id" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  # /usr/sbin is intentionally excluded: lsof is absent, while ps, git, and
+  # the isolated tmux wrapper remain available to the actual teardown script.
+  set +e
+  env -u TMUX -u TMUX_PANE FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+    PATH="$dir/fakebin:/usr/bin:/bin" "$TEARDOWN" "$id" --force \
+    > "$dir/first.out" 2> "$dir/first.err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "first return should fail so cleanup can be retried"
+  [ -f "$dir/home/state/$id.meta" ] || fail "failed return erased task record"
+  kill -0 "$control_pid" 2>/dev/null || fail "first cleanup killed control pane"
+  if kill -0 "$target_pid" 2>/dev/null; then
+    fail "live task pane process group survived no-lsof cleanup"
+  fi
+  # The counterfactual matters: a non-exact lookup silently returns main,
+  # while exact lookup fails once the task window has been closed.
+  [ "$(env -u TMUX -u TMUX_PANE "$REAL_TMUX" -L "$socket" display-message -p -t "$session:$target" '#{pane_pid}')" = "$control_pid" ] \
+    || fail "isolated tmux did not reproduce missing-window fallback"
+  if env -u TMUX -u TMUX_PANE "$REAL_TMUX" -L "$socket" has-session -t "=$session:=$target" 2>/dev/null; then
+    fail "exact target unexpectedly resolved the closed task window"
+  fi
+  env -u TMUX -u TMUX_PANE FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+    PATH="$dir/fakebin:/usr/bin:/bin" "$TEARDOWN" "$id" --force \
+    > "$dir/retry.out" 2> "$dir/retry.err" \
+    || fail "retry with absent task pane failed: $(cat "$dir/retry.err")"
+  kill -0 "$control_pid" 2>/dev/null || fail "retry killed control pane through tmux target fallback"
+  [ ! -f "$dir/home/state/$id.meta" ] || fail "retry did not complete cleanup"
+  env -u TMUX -u TMUX_PANE "$REAL_TMUX" -L "$socket" kill-server 2>/dev/null || true
+  pass "fm-teardown: without lsof a live task group is reaped and an absent task pane cannot reap the control pane on retry"
+}
+
 test_invalid_endpoint_records_refuse_before_mutation
 test_supported_backend_endpoint_records_validate
 test_tmux_empty_target_refuses_without_invocation
 test_recorded_process_identity_cleanup_is_exact
 test_isolated_tmux_invalid_and_valid_cleanup
+test_isolated_tmux_no_lsof_reap_and_retry

@@ -818,6 +818,67 @@ validate_worktree_teardown_safety() {
   fi
 }
 
+# When lsof is absent, only a live, exactly named tmux task window can
+# authorize signalling its pane's process group. Tmux display-message alone
+# silently falls back to another window when the named window is gone.
+teardown_tmux_task_pane_pid() {  # <exact target>
+  local target=$1 session window result name pid
+  session=${target%%:*}
+  window=${target#*:}
+  [ -n "$session" ] && [ "$window" = "fm-$ID" ] || return 1
+  tmux has-session -t "=$session:=$window" 2>/dev/null || return 1
+  result=$(tmux display-message -p -t "=$session:=$window" '#{session_name}:#{window_name} #{pane_pid}' 2>/dev/null) || return 1
+  name=${result% *}
+  pid=${result##* }
+  [ "$name" = "$target" ] || return 1
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$pid"
+}
+
+teardown_process_identity() {  # <pid>
+  local identity
+  identity=$(LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null) || return 1
+  [ -n "$identity" ] || return 1
+  case "$identity" in *$'\n'*|*$'\r'*) return 1 ;; esac
+  printf '%s\n' "$identity"
+}
+
+teardown_tmux_group_still_owned() {  # <pane pid> <start time> <process group>
+  local pane=$1 identity=$2 pgid=$3 current
+  current=$(teardown_tmux_task_pane_pid "$T") || return 1
+  [ "$current" = "$pane" ] || return 1
+  current=$(teardown_process_identity "$pane") || return 1
+  [ "$current" = "$identity" ] || return 1
+  current=$(ps -o pgid= -p "$pane" 2>/dev/null) || return 1
+  current=${current//[[:space:]]/}
+  [ "$current" = "$pgid" ]
+}
+
+teardown_reap_tmux_group_without_lsof() {
+  local pane identity pgid own_pgid
+  [ "$BACKEND" = tmux ] || return 0
+  command -v lsof >/dev/null 2>&1 && return 0
+  pane=$(teardown_tmux_task_pane_pid "$T") || {
+    echo "teardown: no exact task pane for $ID; skipping process-group reap" >&2
+    return 0
+  }
+  identity=$(teardown_process_identity "$pane") || return 0
+  pgid=$(ps -o pgid= -p "$pane" 2>/dev/null) || return 0
+  pgid=${pgid//[[:space:]]/}
+  case "$pgid" in ''|*[!0-9]*|0|1) return 0 ;; esac
+  own_pgid=$(ps -o pgid= -p "$$" 2>/dev/null) || return 0
+  own_pgid=${own_pgid//[[:space:]]/}
+  [ "$pgid" != "$own_pgid" ] || return 0
+  teardown_tmux_group_still_owned "$pane" "$identity" "$pgid" || return 0
+  echo "teardown: reaping leaked task process group for $ID: $pgid" >&2
+  kill -TERM -- "-$pgid" 2>/dev/null || true
+  sleep 1
+  if teardown_tmux_group_still_owned "$pane" "$identity" "$pgid" \
+    && kill -0 -- "-$pgid" 2>/dev/null; then
+    kill -KILL -- "-$pgid" 2>/dev/null || true
+  fi
+}
+
 require_orca_worktree_path_match() {
   local worktree_id=$1 inspected=$2 resolved inspected_abs resolved_abs
   resolved=$(fm_backend_worktree_path orca "$worktree_id") || {
@@ -1401,6 +1462,8 @@ if [ "$BACKEND" = herdr ]; then
   TEARDOWN_HERDR_SESSION=$FM_BACKEND_HERDR_SESSION
   TEARDOWN_HERDR_PANE=$FM_BACKEND_HERDR_PANE
 fi
+
+teardown_reap_tmux_group_without_lsof
 
 # Best-effort: drop the local task branch so the shared repo does not accumulate refs.
 if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then

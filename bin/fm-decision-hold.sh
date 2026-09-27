@@ -51,6 +51,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-pr-lib.sh
+. "$SCRIPT_DIR/fm-pr-lib.sh"
 
 usage() {
   awk '
@@ -139,6 +141,46 @@ sorted_key_union() {  # <comma-list> <newline-or-space-separated-new-keys>
 meta_value() {  # <meta> <key>
   grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2- || true
 }
+
+# The PR identity parser permits only pr_head and X link fields after pr=.
+# Replace the inventory before that suffix, preserving its original order.
+stamp_inventory() (  # <meta> <comma-separated-keys>
+  local meta=$1 keys=$2 state device tmp line seen_pr=0 has_pr=0
+  state=${meta%/*}
+  [ -d "$state" ] && [ ! -L "$state" ] || return 1
+  device=$(fm_pr_file_device "$state") || return 1
+  fm_pr_regular_destination_on_device_or_absent "$meta" "$device" || return 1
+  if grep -q '^pr=' "$meta"; then
+    has_pr=1
+  fi
+  tmp=$(mktemp "$state/.fm-decision-meta.XXXXXX") || return 1
+  trap 'rm -f -- "$tmp"' EXIT
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      pr=*) seen_pr=1 ;;
+      decisions_reviewed=*|decision_keys=*) continue ;;
+    esac
+    [ "$seen_pr" -eq 1 ] || printf '%s\n' "$line" >> "$tmp" || return 1
+  done < "$meta"
+  printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$keys" >> "$tmp" || return 1
+  if [ "$has_pr" -eq 1 ]; then
+    seen_pr=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        pr=*) seen_pr=1 ;;
+        decisions_reviewed=*|decision_keys=*) continue ;;
+      esac
+      [ "$seen_pr" -eq 0 ] || printf '%s\n' "$line" >> "$tmp" || return 1
+    done < "$meta"
+  fi
+  chmod 0600 "$tmp" || return 1
+  fm_pr_private_file_valid "$tmp" 600 "$device" || return 1
+  if [ "$has_pr" -eq 1 ]; then
+    fm_pr_metadata_identity_parse "$tmp" || return 1
+  fi
+  fm_pr_regular_destination_on_device_or_absent "$meta" "$device" || return 1
+  mv -f -- "$tmp" "$meta"
+)
 
 origin_open_decisions() {  # <origin-id>
   local origin=$1 meta="$STATE/$1.meta" status_file="$STATE/$1.status" open kind last verb
@@ -319,7 +361,7 @@ EOF
 
   if [ "$has_meta" = 1 ]; then
     if [ "$(meta_value "$meta" decisions_reviewed)" != 1 ] || [ "$previous" != "$keys" ]; then
-      printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$keys" >> "$meta"
+      stamp_inventory "$meta" "$keys" || fail "could not safely record decision inventory for $origin"
     fi
 
     # Transfer any still-open status decision to its durable backlog owner so the

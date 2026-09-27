@@ -355,6 +355,34 @@ EOF
   pass "backlog normalization preserves strict roles and resolves every blocker compatibly"
 }
 
+test_archive_only_resolves_absent_completed_blockers() {
+  local home out
+  home=$(make_home archive-resolution)
+  cat > "$home/data/backlog.md" <<'EOF'
+## Queued
+- [ ] live - Still active (kind: ship)
+- [ ] dependent - Check four blockers blocked-by: live blocked-by: retained blocked-by: archived blocked-by: missing (kind: captain) (hold: captain chooses) (hold-kind: captain)
+
+## Done
+- [x] retained - Recently closed (kind: ship)
+EOF
+  cat > "$home/data/done-archive.md" <<'EOF'
+## Done
+- [x] archived - Older closure (kind: ship)
+- [x] live - Old closure from before reopening (kind: ship)
+- [ ] missing - Not a completed archive entry (kind: ship)
+unstructured archived - Not a completed archive entry
+EOF
+  out=$(FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .backlog.records[] | select(.id == "dependent")
+    | .blocked_by_ids == ["live","retained","archived","missing"]
+      and .unresolved_blocker_ids == ["live","missing"]
+      and .captain_actionable == false
+  ' >/dev/null || fail "live/retained/archived/unknown blocker precedence was wrong: $out"
+  pass "only absent checked Done archive rows resolve blockers; active rows take precedence"
+}
+
 test_event_hints_follow_reconciled_current_state() {
   local home fakebin out hint_gen
   home=$(make_home event-hints)
@@ -783,6 +811,7 @@ test_empty_fleet_json
 test_fixture_snapshot_json
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
+test_archive_only_resolves_absent_completed_blockers
 test_event_hints_follow_reconciled_current_state
 test_open_decision_survives_later_unrelated_event
 test_secondmate_open_decision_survives_live_endpoint

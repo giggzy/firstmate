@@ -1889,6 +1889,81 @@ EOF
   pass "main and secondmate captain actionability use the same blocker readiness"
 }
 
+# Exercise the same tasks-axi prune path a captain reaches after enough Done work.
+# The archive is evidence for closure; an id absent from both files is still unknown.
+test_archived_done_blocker_keeps_captain_hold_actionable() {
+  local home fakebin json canonical shown ready i
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return; }
+  home=$(make_home archived-blocker)
+  fakebin=$(make_fakebin "$home")
+  cat > "$home/.tasks.toml" <<'EOF'
+backend = "markdown"
+
+[markdown]
+path = "data/backlog.md"
+archive = "data/done-archive.md"
+done_keep = 2
+EOF
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
+  (cd "$home" && tasks-axi add blocker "Work the decision waits on" >/dev/null \
+    && tasks-axi add decide "Captain picks a route" --kind captain >/dev/null \
+    && tasks-axi block decide --by blocker >/dev/null \
+    && tasks-axi hold decide --reason "captain picks a route" --kind captain >/dev/null \
+    && tasks-axi add ready-work "Ready after blocker" >/dev/null \
+    && tasks-axi block ready-work --by blocker >/dev/null) \
+    || fail "could not create the blocked captain hold"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    (.decisions_open | any(.id == "decide") | not)
+      and (.gates | any(.id == "decide" and .blocked_by == "blocker"))
+  ' >/dev/null || fail "live blocker did not gate the captain hold"
+  (cd "$home" && tasks-axi 'done' blocker >/dev/null) || fail "could not close blocker"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    (.decisions_open | any(.id == "decide" and .verb == "captain-hold"))
+      and (.gates | any(.id == "decide") | not)
+  ' >/dev/null || fail "retained Done blocker did not release the captain hold: $json"
+  for i in 1 2; do
+    (cd "$home" && tasks-axi add "filler$i" "Unrelated $i" >/dev/null \
+      && tasks-axi 'done' "filler$i" >/dev/null) || fail "could not prune the Done blocker"
+  done
+  [ -f "$home/data/done-archive.md" ] || fail "tasks-axi did not create the Done archive"
+  canonical=$(FM_HOME="$home" "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$canonical" | jq -e '
+    .backlog.records[] | select(.id == "decide")
+    | .blocked_by_ids == ["blocker"] and .unresolved_blocker_ids == []
+      and .captain_actionable == true
+  ' >/dev/null || fail "archived Done blocker was not resolved in the canonical snapshot"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    (.decisions_open | any(.id == "decide" and .verb == "captain-hold"))
+      and (.gates | any(.id == "decide") | not)
+  ' >/dev/null || fail "archived Done blocker removed the captain hold from Captain Call"
+  shown=$(cd "$home" && tasks-axi show decide)
+  assert_contains "$shown" "blocked: no" "tasks-axi should consider the archived blocker closed"
+  ready=$(cd "$home" && tasks-axi ready)
+  assert_contains "$ready" "ready-work" "tasks-axi should list the archived dependent as ready"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    .gates | any(.id == "ready-work" and .blocked_by == "-")
+  ' >/dev/null || fail "Bearings still marked ready work blocked by an archived Done row"
+  # A genuinely missing id is not proof of completion, even with an archive present.
+  printf '%s\n' '## Queued' \
+    '- [ ] unknown-hold - Unknown dependency blocked-by: never-existed (kind: captain) (hold: pick later) (hold-kind: captain)' \
+    >> "$home/data/backlog.md"
+  canonical=$(FM_HOME="$home" "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$canonical" | jq -e '
+    .backlog.records[] | select(.id == "unknown-hold")
+    | .unresolved_blocker_ids == ["never-existed"] and .captain_actionable == false
+  ' >/dev/null || fail "unknown blocker was incorrectly treated as archived Done"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    (.decisions_open | any(.id == "unknown-hold") | not)
+      and (.gates | any(.id == "unknown-hold" and .blocked_by == "never-existed"))
+  ' >/dev/null || fail "unknown blocker escaped the Bearings gate"
+  pass "pruned Done blockers release dependents and captain holds without resolving unknown ids"
+}
+
 test_domain_alpha_stale_parent_event_does_not_become_current_work
 test_gnu_stat_uses_file_formats_without_bsd_fallback_pollution
 test_parent_activity_evidence_is_bounded_and_disclosed
@@ -1919,6 +1994,7 @@ test_main_unstructured_current_is_disclosed_with_structured_sibling
 test_main_orphan_counterfactual_meta_clears_inventory_warning
 test_mixed_secondmate_roles_partial_state_and_captain_readiness
 test_main_captain_readiness_matches_secondmate_projection
+test_archived_done_blocker_keeps_captain_hold_actionable
 test_completed_scout_report_not_pending
 test_open_decision_surfaces_end_to_end
 test_report_pointers_surface

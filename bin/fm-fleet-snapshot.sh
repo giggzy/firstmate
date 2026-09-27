@@ -19,7 +19,8 @@
 #     hold_reason when tasks-axi emits it. They also carry normalized current_role,
 #     requires_child_metadata, blocked_by_ids, unresolved_blocker_ids, and
 #     captain_actionable fields. Repeated blocker tokens remain ordered; a blocker
-#     resolves only when its structured record is Done, and missing ids stay open.
+#     resolves when its structured record is Done or the Done archive records its
+#     closure. An absent id without archive evidence stays open.
 #   tasks[]: one row per state/<id>.meta, sorted by id.
 #     current_state is parsed from bin/fm-crew-state.sh <id> and preserves
 #     state, source, detail, and raw line separately.
@@ -65,6 +66,7 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 BACKLOG="$DATA/backlog.md"
+DONE_ARCHIVE="$DATA/done-archive.md"
 SNAPSHOT_NOW=${FM_SNAPSHOT_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
 if [ -n "${FM_SNAPSHOT_NOW_EPOCH:-}" ]; then
   SNAPSHOT_EPOCH=$FM_SNAPSHOT_NOW_EPOCH
@@ -149,7 +151,8 @@ aggregation, and marks inventory contradictions or unavailable child state inval
 Its invalidity object names the normalized failure kind and affected ids.
 Actionable tasks-axi captain holds appear as decisions_open and stay visible in
 queued with hold_reason, hold_kind, and plural blocker fields for downstream
-projections. A captain hold is actionable only when every blocker is Done.
+projections. A captain hold is actionable only when every blocker is Done in
+the backlog or the Done archive.
 Cross-home reads use FM_SNAPSHOT_SECONDMATES (default 20, 0 lifts the count
 bound), FM_SNAPSHOT_SECONDMATE_TIMEOUT, and FM_SNAPSHOT_SECONDMATE_MAX_BYTES.
 Terminal contradiction evidence uses
@@ -248,14 +251,23 @@ first_pr_url_in_file() {  # <file>
 }
 
 backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
-  local backlog=${1:-$BACKLOG}
+  local backlog=${1:-$BACKLOG} archived_ids
   if [ ! -f "$backlog" ]; then
     jq -n --arg path "$backlog" '{path:$path,present:false,records:[]}'
     return 0
   fi
 
+  # Only checked, top-level tasks-axi rows in the dedicated archive prove Done.
+  # An active row with the same id still takes precedence below.
+  if [ -f "$DONE_ARCHIVE" ]; then
+    archived_ids=$(jq -Rn '[inputs
+      | (capture("^[-*][[:space:]]+\\[[xX]\\][[:space:]]+(?<id>[^[:space:]]+)[[:space:]]+-[[:space:]]+")?)
+      | select(. != null) | .id] | unique' < "$DONE_ARCHIVE") || return 1
+  else
+    archived_ids='[]'
+  fi
   # shellcheck disable=SC2094
-  jq -Rn --arg path "$backlog" '
+  jq -Rn --arg path "$backlog" --argjson archived_ids "$archived_ids" '
     def trim: gsub("^[[:space:]]+|[[:space:]]+$"; "");
     def section_state:
       if . == "In flight" then "in_flight"
@@ -379,7 +391,8 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
           . as $record
           | .unresolved_blocker_ids = [
               $record.blocked_by_ids[] as $blocker
-              | select($resolved_ids[$blocker] != true)
+              | select(if $resolved_ids | has($blocker) then $resolved_ids[$blocker] != true
+                       else ($archived_ids | index($blocker)) == null end)
               | $blocker
             ]
           | .current_role =

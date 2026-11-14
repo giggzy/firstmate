@@ -100,6 +100,7 @@ fm_ps_ppid() {  # <pid> -> parent pid
 # is a verified harness. Sets FM_HARNESS_IS_CLAUDE for the ancestry walk.
 #
 # Evidence, in order:
+#   0. a known helper daemon is never a harness (fm_harness_helper_process).
 #   1. the basename of the reported command name, against FM_HARNESS_RE.
 #   2. an exact harness component in that command path or in argv[0]. Both are
 #      needed because the two platforms report different things: macOS reports
@@ -111,15 +112,36 @@ fm_ps_ppid() {  # <pid> -> parent pid
 #   5. omp's structural identity, owned by bin/fm-omp-process-lib.sh, which
 #      also covers the bun-package install whose process name is `bun`.
 FM_HARNESS_IS_CLAUDE=0
+# True when command name $1 / argv[0] $2 is a helper daemon whose name or install
+# path merely contains a harness name. OpenCode 2.3 runs every shell-tool command
+# inside a persistent `opencode-pty` daemon (<cache>/opencode/bin/opencode-pty/
+# <version>/opencode-pty) that is a CHILD of the `opencode serve` process hosting
+# the plugins, and that can be handed from one server to the next. It is neither
+# the session nor an ancestor of the plugin host, so anchoring the lock on it
+# leaves the OpenCode arm plugin's ownership walk (which climbs from the plugin
+# host) unable to ever reach the recorded pid: every turn end reads read-only and
+# supervision never re-arms. Matched by exact basename so a harness path that
+# only passes through a directory of that name is unaffected.
+fm_harness_helper_process() {  # <comm> <argv0>
+  local base
+  for base in "$(basename -- "$1")" "$(basename -- "$2")"; do
+    case "$base" in
+      opencode-pty|opencode-pty.*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 fm_harness_process_matches() {  # <comm> <args>
   local comm=$1 args=$2 base argv0 name
   FM_HARNESS_IS_CLAUDE=0
+  argv0=${args%% *}
+  fm_harness_helper_process "$comm" "$argv0" && return 1
   base=$(basename -- "$comm")
   if printf '%s' "$base" | grep -qE "$FM_HARNESS_RE"; then
     case "$base" in *claude*) FM_HARNESS_IS_CLAUDE=1 ;; esac
     return 0
   fi
-  argv0=${args%% *}
   if name=$(fm_harness_path_name "$comm") || name=$(fm_harness_path_name "$argv0"); then
     case "$name" in claude) FM_HARNESS_IS_CLAUDE=1 ;; esac
     return 0

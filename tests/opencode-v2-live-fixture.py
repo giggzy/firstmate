@@ -38,6 +38,7 @@ def run(lab):
     commands = {
         "CASE_CD": "cd ..; printf escaped > cd-escaped",
         "CASE_ARM": "bin/fm-watch-arm.sh --restart; printf bundled > arm-escaped",
+        "CASE_LOCK": "bin/fm-lock.sh",
     }
 
     class Provider(http.server.BaseHTTPRequestHandler):
@@ -168,7 +169,22 @@ def run(lab):
         api(f"/api/session/{sid}/prompt", {"text": "CASE_GUARD"})
         until(lambda: any("TURN WOULD END BLIND" in m.get("text", "") for m in context()), "native turn-end guard follow-up")
         print("ok - native terminal event admits a turn-end guard follow-up")
-        (fmhome / "state/.lock").write_text(str(process.pid) + "\n")
+        # Acquire the session lock exactly as a primary does, through the shell tool, never by
+        # writing the server pid here: OpenCode 2.3 runs shell commands inside an `opencode-pty`
+        # helper daemon that is a CHILD of this server, so the lock must skip the helper and
+        # anchor on the server process that hosts the plugins, or the arm plugin reads every
+        # turn end as read-only and supervision never re-arms.
+        lock_turn = api(f"/api/session/{sid}/prompt", {"text": "CASE_LOCK"})["data"]["id"]
+
+        def lock_turn_done():
+            messages = context()
+            index = next((i for i, m in enumerate(messages) if m["id"] == lock_turn), None)
+            return index is not None and any(m["type"] == "idle" for m in messages[index + 1:])
+
+        until(lambda: lock_turn_done() and (fmhome / "state/.lock").exists(), "session lock acquired through the shell tool")
+        anchor = (fmhome / "state/.lock").read_text().split()[0]
+        assert anchor == str(process.pid), f"state/.lock anchors on pid {anchor}, not the plugin host {process.pid}"
+        print("ok - the session lock acquired through the native shell tool anchors on the plugin host")
         api(f"/api/session/{sid}/prompt", {"text": "CASE_WATCH_ARM"})
         lock = fmhome / "state/.watch.lock/pid"
         until(lock.exists, "watcher arming")

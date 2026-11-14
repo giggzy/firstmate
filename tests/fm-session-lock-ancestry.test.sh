@@ -287,6 +287,83 @@ SH
   pass "session-lock: a live version-named session holding the lock is not mistaken for a stale owner"
 }
 
+# OpenCode 2.3 runs every shell-tool command inside a persistent `opencode-pty`
+# daemon (200) that is a CHILD of the `opencode serve --stdio` process (300) hosting
+# the plugins, itself a child of the `opencode --standalone` front end (400).
+# Anchoring the lock on the daemon records a pid the arm plugin's ownership walk,
+# which climbs from the plugin host, can never reach, so supervision never
+# re-arms. The daemon is a helper, not the harness: the walk must pass through it
+# and anchor on the server, on both platforms' `ps` reporting shapes. Pid 500 is a
+# real harness whose install path merely passes through a directory of that name.
+test_opencode_pty_helper_is_not_the_session_anchor() {
+  local dir fakebin shape got
+  dir="$TMP_ROOT/opencode-pty-helper"
+  fakebin=$(fm_fakebin "$dir")
+  mkdir -p "$dir/state"
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+set -u
+field= pid=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) field=$2; shift 2 ;;
+    -p) pid=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+pty=/Users/u/.cache/opencode/bin/opencode-pty/0.5.2-abc/opencode-pty
+case "$pid:$field:${FM_TEST_PS_SHAPE:-linux}" in
+  200:comm=:linux) printf '%s\n' opencode-pty ;;
+  200:comm=:macos) printf '%s\n' "$pty" ;;
+  200:args=:*) printf '%s\n' "$pty daemon --runtime-dir /Users/u/.local/state/opencode/pty --name x" ;;
+  200:ppid=:*) printf '%s\n' 300 ;;
+  300:comm=:linux) printf '%s\n' opencode ;;
+  300:comm=:macos) printf '%s\n' /Users/u/.opencode/bin/opencode ;;
+  300:args=:*) printf '%s\n' '/Users/u/.opencode/bin/opencode serve --stdio --port 0' ;;
+  300:ppid=:*) printf '%s\n' 400 ;;
+  400:comm=:*) printf '%s\n' opencode ;;
+  400:args=:*) printf '%s\n' 'opencode --standalone' ;;
+  400:ppid=:*) printf '%s\n' 1 ;;
+  500:comm=:linux) printf '%s\n' opencode ;;
+  500:comm=:macos) printf '%s\n' /opt/opencode-pty/bin/opencode ;;
+  500:args=:*) printf '%s\n' '/opt/opencode-pty/bin/opencode' ;;
+  500:ppid=:*) printf '%s\n' 1 ;;
+  *:comm=:*) printf '%s\n' bash ;;
+  *:args=:*) printf '%s\n' 'bash /repo/bin/fm-lock.sh' ;;
+  *:ppid=:*) printf '%s\n' 200 ;;
+esac
+SH
+  chmod +x "$fakebin/ps"
+
+  for shape in linux macos; do
+    got=$(FM_TEST_PS_SHAPE="$shape" lib_eval "$fakebin" 'fm_harness_ancestry_pid') \
+      || fail "$shape: no harness was found above the opencode-pty helper"
+    [ "$got" = 300 ] || fail "$shape: ancestry resolved '$got', expected the opencode serve process 300, not the pty helper 200"
+    got=$(FM_TEST_PS_SHAPE="$shape" lib_eval "$fakebin" 'fm_session_lock_anchor_pid') \
+      || fail "$shape: no lock anchor was resolved above the opencode-pty helper"
+    [ "$got" = 300 ] || fail "$shape: the lock anchor is '$got', expected the opencode serve process 300"
+    FM_TEST_PS_SHAPE="$shape" lib_eval "$fakebin" 'fm_harness_pid_alive 200' \
+      && fail "$shape: the opencode-pty helper daemon was classified as a harness"
+    FM_TEST_PS_SHAPE="$shape" lib_eval "$fakebin" 'fm_harness_pid_alive 300' \
+      || fail "$shape: the opencode serve process was not classified as a harness"
+    FM_TEST_PS_SHAPE="$shape" lib_eval "$fakebin" 'fm_harness_pid_alive 500' \
+      || fail "$shape: a harness whose install path passes through an opencode-pty directory was rejected"
+
+    printf '300\n' > "$dir/state/.lock"
+    FM_TEST_PS_SHAPE="$shape" lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'" \
+      || fail "$shape: the session holding an opencode serve anchored lock did not recognize itself as the owner"
+
+    # A lock recorded on the helper by a build without this rule is not a live
+    # owner: it is reclaimable, so the next acquisition re-anchors it on 300.
+    printf '200\n' > "$dir/state/.lock"
+    FM_TEST_PS_SHAPE="$shape" lib_eval "$fakebin" "fm_session_lock_pid_blocks_reclaim 200" \
+      && fail "$shape: a lock recorded on the opencode-pty helper blocks reclaim"
+    FM_TEST_PS_SHAPE="$shape" lib_eval "$fakebin" "fm_session_lock_foreign_owner_live '$dir/state'" \
+      && fail "$shape: a lock recorded on the opencode-pty helper was read as a live foreign owner"
+  done
+  pass "session-lock: the OpenCode opencode-pty helper daemon is passed over and the lock anchors on opencode serve"
+}
+
 # A background Claude session's process table. The hook fires inside
 # `claude bg-spare` (710), whose parent is `claude bg-pty-host` (720). With the
 # transient daemon gone the pty-host is reparented to launchd, so the contiguous
@@ -1663,6 +1740,7 @@ test_bun_run_omp_is_identified_on_both_platforms
 test_ordinary_paths_are_never_harness_processes
 test_harness_beyond_a_gap_never_owns_the_lock
 test_competing_version_named_session_is_seen_as_live
+test_opencode_pty_helper_is_not_the_session_anchor
 test_same_session_id_owns_a_recycled_background_chain
 test_anchor_pid_is_the_model_loop_process_only_for_a_trusted_id
 test_windows_session_is_identified_from_its_published_pid

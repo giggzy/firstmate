@@ -193,6 +193,31 @@ def run(lab):
         until(lambda: any("WATCHER FIRED" in m.get("text", "") for m in context()), "native watcher notification")
         until(lambda: lock.exists() and lock.read_text().strip() != first_watcher, "successor watcher")
         print("ok - native watcher prompt delivery preserves a live successor")
+        # OpenCode boots the location again after an idle eviction, a config change, or a reload, and
+        # evaluates every plugin afresh in the same process while the arm the previous evaluation
+        # started keeps running. The new evaluation must adopt that arm: a competing `--restart` TERMs
+        # the live watcher, and the two evaluations then restart each other's watcher until the retry
+        # limit, which surfaces as watcher failures in the session.
+        cycles = fmhome / "state/.watch-cycle-exits.log"
+        stopped_before = cycles.read_text().count("reason=signal-exit") if cycles.exists() else 0
+        watcher_before = lock.read_text().strip()
+        api(f"/api/location/reload?{location_query}", {}, "POST")
+        reload_turn = api(f"/api/session/{sid}/prompt", {"text": "Turn after the location reload."})["data"]["id"]
+
+        def reload_turn_done():
+            messages = context()
+            index = next((i for i, m in enumerate(messages) if m["id"] == reload_turn), None)
+            return index is not None and any(m["type"] == "idle" for m in messages[index + 1:])
+
+        until(reload_turn_done, "turn after the location reload")
+        time.sleep(6)
+        assert (lock.read_text().strip() if lock.exists() else "") == watcher_before, "a re-evaluated plugin replaced the live watcher"
+        stopped_after = cycles.read_text().count("reason=signal-exit") if cycles.exists() else 0
+        assert stopped_after == stopped_before, "a re-evaluated plugin restarted a live watcher"
+        messages = context()
+        after_reload = messages[next(i for i, m in enumerate(messages) if m["id"] == reload_turn):]
+        assert not any("watcher: FAILED" in m.get("text", "") for m in after_reload), "a watcher failure was surfaced after the location reload"
+        print("ok - a re-evaluated plugin adopts the live watcher instead of restarting it")
         api(f"/api/session/{sid}/prompt", {"text": "CASE_INTERRUPT"})
         until(slow_entered.is_set, "controlled active native model turn")
         assert api(f"/api/session/{sid}/interrupt?resume=false", method="POST")["interrupted"]

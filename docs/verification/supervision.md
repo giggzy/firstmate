@@ -747,6 +747,37 @@ tests/fm-claude-stop-autoarm.test.sh
 tests/fm-turnend-guard.test.sh
 ```
 
+### OpenCode plugin re-evaluation, 2026-11-16
+
+Verified on 2026-11-16 on macOS arm64 with OpenCode 2.3.0, in a private `opencode serve` with a loopback provider, a throwaway `HOME`, and a throwaway firstmate home (no credentials).
+A probe plugin printed its own module identity at each evaluation and showed how OpenCode 2.3.0 treats a plugin when the location boots again, whether by `POST /api/location/reload` or by `DELETE /api/debug/location` followed by the next request:
+
+```text
+MODULE-EVALUATED module=qjcy8c   SETUP n=1   ... location.shutdown  DISPOSE-CALLED n=1  STREAM-ENDED n=1
+MODULE-EVALUATED module=uuflqc   SETUP n=2   (fresh module bindings; globalThis counter n kept counting)
+```
+
+Each evaluation gets fresh module bindings, the previous evaluation's event stream ends, and nothing stops a child process it started.
+Before the shared owner record, the real plugin's second evaluation started `fm-watch-arm.sh --restart` on its first turn end, and the two evaluations restarted each other's watcher: twelve arms in forty seconds, each ended by TERM, until one evaluation reached its retry limit and prompted the session with `could not restore watcher continuity after 5 retries`.
+The token-free live fixture now reloads the location while a successor watcher is live, ends a turn, and requires the same watcher, no new TERM-ended cycle, and no surfaced watcher failure:
+
+```sh
+python3 tests/opencode-v2-live-fixture.py
+```
+
+Observed output after the change:
+
+```text
+ok - native watcher prompt delivery preserves a live successor
+ok - a re-evaluated plugin adopts the live watcher instead of restarting it
+```
+
+Observed output before it:
+
+```text
+AssertionError: a re-evaluated plugin replaced the live watcher
+```
+
 ### StopFailure auto-arm
 
 A Claude turn that ends on an API error (`authentication_failed`, `connection_failed`, `server_error`, and similar) runs no `Stop` phase, so before this wiring an error-ended turn left watcher continuity with no hook.

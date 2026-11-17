@@ -10,6 +10,7 @@ In this document, an arm is one run of `bin/fm-watch-arm.sh`, which starts a wat
 | Topic | Section |
 | --- | --- |
 | Which component re-arms the watcher on each harness | [Ownership](#ownership) |
+| Why a re-evaluated OpenCode plugin must not start its own arm | [OpenCode plugin re-evaluation](#opencode-plugin-re-evaluation) |
 | What happens between an actionable close and the wake reaching the model | [Actionable wake ordering](#actionable-wake-ordering) |
 | How a watcher-downtime episode is announced and retired | [Recovery episode acknowledgement](#recovery-episode-acknowledgement) |
 | How each actor consumes the wake queue | [Per-actor acknowledgement](#per-actor-acknowledgement) |
@@ -76,6 +77,16 @@ omp's replacement follows its own generation-owner contract in `.omp/extensions/
 
 - It retires the predecessor arm at replacement shutdown instead of retaining it across the handoff.
 - It reports no shutdown reason, so every shutdown with a pending actionable close persists the handoff for the next owning `session_start` to replay.
+
+### OpenCode plugin re-evaluation
+
+OpenCode 2 evaluates `.opencode/plugins/fm-primary-watch-arm.js` again, with fresh module bindings in the same process, each time it boots the location again.
+That happens after an idle eviction of the location, a change to a watched configuration or plugin file, and a reload.
+It ends the previous evaluation's event stream but not the arm that evaluation started, so that arm, its close handlers, and its retry timer outlive the module state that created them.
+The plugin therefore keeps one owner record per state directory on `globalThis`, holding the arm, the retry timer and failure budget, and the in-flight launch and restoration, so every evaluation shares one arm owner.
+A turn end in a newer evaluation adopts the live arm instead of starting `bin/fm-watch-arm.sh --restart`, and a wake the older arm delivers is prompted through the newest evaluation's transport.
+An evaluation with its own owner state would restart the live watcher on its first turn end, read the resulting 143 close as an unexpected failure, and retry with its own restart, so the two evaluations would restart each other's watcher until the retry limit.
+That fight surfaces as `could not launch a continuity retry` and `could not restore watcher continuity after 5 retries` failures while a live watcher exists.
 
 ### Cursor stop hook
 
@@ -490,6 +501,13 @@ The same suite covers ordinary same-process session replacement for `/new`, `/re
 - A mid-restore marker advance that delivers the wake with no rejection appendix, offers it to an accepting supervision branch like a confirmed delivery, and records the attempt and the confirm result in the bounded extension log when opted in.
 - A failed confirmation for a stale successor that spares a newer arm started by a repair.
 - A repair, a scheduled retry, and a deferred close over a dead-but-unclosed arm child that each start a fresh arm instead of stalling.
+
+`tests/fm-pi-watch-extension.test.sh` also evaluates the OpenCode watch plugin twice in one process, as OpenCode does when it boots the location again, to prove that:
+
+- The second evaluation's turn end adopts the live arm instead of restarting its watcher.
+- A wake the first evaluation's arm delivers afterwards restores one successor and prompts through the newest evaluation.
+
+[`verification/supervision.md`](verification/supervision.md#opencode-plugin-re-evaluation-2026-11-16) records the same check against a real OpenCode server.
 
 The guard and session-start suites prove that active generation evidence tolerates a fresh-beacon handoff.
 They also prove that a legacy or handoff-phase watcher marker from an absent replacement extension still raises the outage diagnostic.

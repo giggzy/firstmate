@@ -6253,6 +6253,140 @@ EOF
   pass "OpenCode healthy arm output does not suppress the turn-end guard"
 }
 
+# OpenCode 2 evaluates the watch plugin again, with fresh module bindings in the
+# same process, whenever it boots the location again (idle eviction, config
+# change, reload). It ends the previous evaluation's event stream but not the
+# arm that evaluation started, which outlives it. The stub models the real
+# arm's --restart, which TERMs the watcher the home names before holding it,
+# and a TERMed holder reports the typed 143 failure the real arm prints. Two
+# evaluations that each kept their own owner state restarted each other's
+# watcher until the retry limit, so the second evaluation's first turn end must
+# adopt the live arm instead of restarting it, and a wake the first
+# evaluation's arm delivers afterwards must restore one successor and prompt
+# through the newest evaluation.
+test_opencode_plugin_reevaluation_adopts_the_live_arm() {
+  local plugin repo home log stop wake out status
+  plugin="$ROOT/.opencode/plugins/fm-primary-watch-arm.js"
+  repo="$TMP_ROOT/opencode-reeval-root"
+  home="$TMP_ROOT/opencode-reeval-home"
+  log="$TMP_ROOT/opencode-reeval.log"
+  stop="$TMP_ROOT/opencode-reeval.stop"
+  wake="$TMP_ROOT/opencode-reeval.wake"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  git init -q "$repo"
+  : > "$repo/AGENTS.md"
+  cp "$ROOT/bin/fm-supervision-lib.sh" "$repo/bin/fm-supervision-lib.sh"
+  : > "$home/state/task.meta"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then
+  printf 'confirmed\n' >> "${FM_ARM_LOG:?}"
+  exit 0
+fi
+holder="$FM_HOME/state/fake-holder.pid"
+printf 'arm=%s args=%s predecessor=%s\n' "$$" "$*" "${FM_WATCH_PREDECESSOR_ARM_PID:-none}" >> "${FM_ARM_LOG:?}"
+if [ "${1:-}" = --restart ] && [ -s "$holder" ]; then
+  kill -TERM "$(cat "$holder")" 2>/dev/null
+fi
+printf '%s\n' "$$" > "$holder"
+printf 'watcher: started pid=%s (beacon fresh) recovery-generation=fixture-generation\n' "$$"
+trap 'printf "watcher: FAILED - watcher cycle exited 143 without an actionable reason\n"; exit 143' TERM
+while [ ! -e "$FM_STOP_FILE" ] && [ -e "$0" ]; do
+  if [ -e "$FM_WAKE_FILE" ] && [ "$(cat "$holder" 2>/dev/null)" = "$$" ]; then
+    rm -f "$FM_WAKE_FILE" "$holder"
+    printf 'signal: synthetic wake\n'
+    exit 0
+  fi
+  sleep 0.02
+done
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(PLUGIN="$plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_STOP_FILE="$stop" FM_WAKE_FILE="$wake" FM_WATCH_REARM_RETRY_BASE_MS=20 node 2>&1 <<'EOF'
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const prompts = [];
+function makeCtx(name) {
+  const queue = [];
+  const waiters = [];
+  return {
+    location: { project: { directory: process.env.WORKTREE } },
+    event: {
+      subscribe: async () => ({
+        [Symbol.asyncIterator]: () => ({
+          next: () => (queue.length
+            ? Promise.resolve({ value: queue.shift(), done: false })
+            : new Promise((resolve) => waiters.push(resolve))),
+        }),
+      }),
+    },
+    session: { prompt: async ({ text }) => { prompts.push({ name, text }); } },
+    turnEnd() {
+      const value = { type: "session.execution.succeeded", properties: { sessionID: "session-test" } };
+      const waiter = waiters.shift();
+      if (waiter) waiter({ value, done: false });
+      else queue.push(value);
+    },
+  };
+}
+const settle = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const rows = () => (existsSync(process.env.FM_ARM_LOG) ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n") : []);
+const armRows = () => rows().filter((row) => row.startsWith("arm="));
+async function until(check, label) {
+  for (let i = 0; i < 500; i += 1) {
+    if (check()) return;
+    await settle(10);
+  }
+  throw new Error(`timed out: ${label}: ${rows().join(" | ")}`);
+}
+const holderFile = `${process.env.FM_HOME}/state/fake-holder.pid`;
+const holder = () => readFileSync(holderFile, "utf8").trim();
+const alive = (pid) => { try { process.kill(Number(pid), 0); return true; } catch { return false; } };
+
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const first = await import(`${pathToFileURL(process.env.PLUGIN).href}?evaluation=1`);
+const second = await import(`${pathToFileURL(process.env.PLUGIN).href}?evaluation=2`);
+const firstCtx = makeCtx("first");
+const secondCtx = makeCtx("second");
+
+first.default.setup(firstCtx);
+firstCtx.turnEnd();
+await until(() => armRows().length === 1 && existsSync(holderFile), "first evaluation arms once");
+const firstHolder = holder();
+
+// The location boots again: the second evaluation has fresh module state while the first arm lives on.
+second.default.setup(secondCtx);
+secondCtx.turnEnd();
+await settle(500);
+if (armRows().length !== 1) throw new Error(`the second evaluation started a competing arm: ${rows().join(" | ")}`);
+if (!alive(firstHolder) || holder() !== firstHolder) throw new Error(`the live watcher was restarted by the second evaluation: ${rows().join(" | ")}`);
+
+// The first evaluation's arm delivers a wake after the second one took over.
+writeFileSync(process.env.FM_WAKE_FILE, "wake\n");
+await until(() => armRows().length === 2 && prompts.length >= 1, "one successor and one wake prompt");
+await settle(300);
+if (armRows().length !== 2) throw new Error(`expected exactly one successor arm: ${rows().join(" | ")}`);
+if (!/--restart/.test(armRows()[1]) || !/predecessor=[0-9]+/.test(armRows()[1])) throw new Error(`unexpected successor arm: ${armRows()[1]}`);
+if (prompts.length !== 1) throw new Error(`expected exactly one wake prompt, got ${prompts.length}: ${prompts.map((p) => p.text).join(" | ")}`);
+if (prompts[0].name !== "second") throw new Error(`the wake was prompted through the ${prompts[0].name} evaluation, not the newest`);
+if (!/synthetic wake/.test(prompts[0].text) || /FAILED/.test(prompts[0].text)) throw new Error(`unexpected wake prompt: ${prompts[0].text}`);
+const successor = holder();
+if (!alive(successor)) throw new Error("the successor watcher is not alive");
+
+// The turn that handles the wake ends in the second evaluation: it adopts the successor.
+secondCtx.turnEnd();
+await settle(500);
+if (armRows().length !== 2 || holder() !== successor || !alive(successor)) throw new Error(`the turn end restarted the successor: ${rows().join(" | ")}`);
+if (prompts.length !== 1) throw new Error(`a failure was surfaced after the handoff: ${prompts.map((p) => p.text).join(" | ")}`);
+writeFileSync(process.env.FM_STOP_FILE, "stop\n");
+EOF
+  )
+  status=$?
+  [ "$status" -eq 0 ] || fail "OpenCode watch plugin evaluations must share one arm owner: $out"
+  [ -z "$out" ] || fail "OpenCode re-evaluation test printed output: $out"
+  pass "OpenCode watcher plugin evaluations share one arm owner across a location re-evaluation"
+}
+
 # Both OpenCode plugin writes to a child's stdin can fail with EPIPE, because
 # the child is free to exit without reading. An unhandled stdin error is a
 # thrown 'error' event that takes the whole host process down with it. Here the
@@ -6380,5 +6514,6 @@ test_opencode_established_empty_close_honors_retry_limit
 test_opencode_actionable_close_rechecks_session_lock
 test_opencode_watch_arm_coordinates_with_turnend_guard
 test_opencode_healthy_arm_output_does_not_suppress_guard
+test_opencode_plugin_reevaluation_adopts_the_live_arm
 test_opencode_turnend_guard_survives_an_encoder_that_never_reads_stdin
 test_pi_suite_leaves_no_orphaned_processes
